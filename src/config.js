@@ -1,10 +1,10 @@
 // --- App Version ---
 // Change this version number to force a refresh of cached CSS and JS files.
-const APP_VERSION = "1.3.10";
+export const APP_VERSION = "1.3.10";
 
 // --- Firebase Config ---
 // This object contains your Firebase project's credentials.
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyDMge0ZVBwCHb6tzmdIv5dD_BMrtfu_P_I",
   authDomain: "swim-meet-app.firebaseapp.com",
   projectId: "swim-meet-app",
@@ -12,22 +12,19 @@ const firebaseConfig = {
   messagingSenderId: "869827349699",
   appId: "1:869827349699:web:26b08aeece866760cbe676"
 };
-// --- Authorized Users ---
-// Add the email addresses of users who are allowed to control the tracker.
-const authorizedUsers = ["jonny5v@gmail.com"];
 
 // --- Authorized Admin Users ---
 // A simple map to determine which team an admin belongs to.
-const ADMIN_TEAMS = {
+export const ADMIN_TEAMS = {
     'jonny5v@gmail.com': 'SUPERADMIN', 
-    'admin@kenneraquatics.com': 'AQN',
-    'coach@riverridgesharks.com': 'SCS',
+    'admin@westgatecc.com': 'WCC',
+    'admin@ponchatrainrc.com': 'PRC',
     'admin@barracudaswim.org': 'BARR',
-    'user@example.com': 'KLR' 
+    'admin@example.com': 'KLR' 
 };
 
 // --- Standard Event Library for Bulk Loading ---
-const STANDARD_EVENT_LIBRARY = [
+export const STANDARD_EVENT_LIBRARY = [
     "Girls 6 & Under 25m Freestyle", "Boys 6 & Under 25m Freestyle", "Girls 7-8 25m Freestyle", "Boys 7-8 25m Freestyle",
     "Girls 9-10 50m Freestyle", "Boys 9-10 50m Freestyle", "Girls 11-12 50m Freestyle", "Boys 11-12 50m Freestyle",
     "Girls 13-14 50m Freestyle", "Boys 13-14 50m Freestyle", "Girls 15-17 50m Freestyle", "Boys 15-17 50m Freestyle",

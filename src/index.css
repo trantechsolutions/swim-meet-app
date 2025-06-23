@@ -1,0 +1,33 @@
+/* --- Tailwind Directives --- */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- Custom App Styles --- */
+
+/* A utility class to visually hide elements while keeping them 
+  accessible to screen readers.
+*/
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* --- Drag and Drop Styles --- */
+.schedule-item {
+    cursor: grab;
+}
+.sortable-ghost {
+    opacity: 0.4;
+    background: #a3d4a2; /* primary-light */
+}
+.sortable-chosen {
+    cursor: grabbing;
+}

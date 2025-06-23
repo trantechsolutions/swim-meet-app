@@ -1,579 +1,23 @@
-const { useState, useEffect, useMemo, useRef } = React;
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import Swal from 'sweetalert2';
+import Sortable from 'sortablejs';
 
-// --- Helper functions for localStorage ---
-const saveFavoritesToLocalStorage = (favorites) => {
-    try {
-        localStorage.setItem('swimMeetFavorites', JSON.stringify(Array.from(favorites)));
-    } catch (error) {
-        console.error("Error saving favorites:", error);
-    }
-};
-
-const loadFavoritesFromLocalStorage = () => {
-    try {
-        const stored = localStorage.getItem('swimMeetFavorites');
-        return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch (error) {
-        console.error("Error loading favorites:", error);
-        return new Set();
-    }
-};
-
-// Reusable Icon Component
-const Icon = ({ name, type = 'fas', ...props }) => <i className={`${type} fa-${name}`} {...props}></i>;
-
-// --- Firebase Services ---
-// Configs and static data are now loaded from config.js
-const {
-    initializeApp,
-    getAuth,
-    onAuthStateChanged,
-    GoogleAuthProvider,
-    signInWithPopup,
-    signInAnonymously,
-    getFirestore,
-    collection,
-    query,
-    where,
-    doc,
-    onSnapshot,
-    setDoc,
-    addDoc,
-    updateDoc,
-    deleteDoc,
-    getDocs,
-    writeBatch,
-    Timestamp
-} = window.firebase;
-
-let app, auth, db, provider;
-
-try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    provider = new GoogleAuthProvider();
-} catch (e) {
-    console.error("Firebase initialization failed. Make sure a valid config.js file is loaded before this script.", e);
-}
+// Firebase Imports
+import { db } from '../firebase.js'; // Use the new central file
+import { collection, query, where, doc, onSnapshot, setDoc, addDoc, updateDoc, deleteDoc, getDocs, writeBatch, Timestamp } from "firebase/firestore";
+import { ADMIN_TEAMS, STANDARD_EVENT_LIBRARY } from '../config.js';
 
 
-// Main App Component
-function App() {
-    const [theme, setTheme] = useState(localStorage.getItem('theme') || 'system');
-    const [user, setUser] = useState(null);
-    const [adminRole, setAdminRole] = useState(null);
-    const [favorites, setFavorites] = useState(new Set());
-    const [activeTab, setActiveTab] = useState('schedule');
-    const [currentEvent, setCurrentEvent] = useState({ eventNumber: 1, heatNumber: 1, isTracking: false });
-    const [eventSearch, setEventSearch] = useState('');
-    const [swimmerSearch, setSwimmerSearch] = useState('');
-    const [notification, setNotification] = useState({ show: false, message: '', type: '' });
-    const [favoritesOpen, setFavoritesOpen] = useState(false);
+// Component Imports
+import Icon from '../components/Icon.jsx';
+import AdminButton from '../components/admin/AdminButton.jsx';
+import AdminInput from '../components/admin/AdminInput.jsx';
+import AdminSelect from '../components/admin/AdminSelect.jsx';
 
-    const [meetData, setMeetData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [allMeets, setAllMeets] = useState([]);
-    const [selectedMeetId, setSelectedMeetId] = useState(null);
-
-    const showNotification = (message, type = 'info') => {
-        setNotification({ show: true, message, type });
-        setTimeout(() => {
-            setNotification({ show: false, message: '', type: '' });
-        }, 3000);
-    };
-
-    useEffect(() => {
-        const applyTheme = (t) => {
-            const effectiveTheme = t === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
-            const root = document.documentElement;
-            // Use class-based dark mode for Tailwind
-            if (effectiveTheme === 'dark') {
-                root.classList.add('dark');
-            } else {
-                root.classList.remove('dark');
-            }
-        };
-        applyTheme(theme);
-        localStorage.setItem('theme', theme);
-        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-        const handleChange = () => applyTheme(theme);
-        mediaQuery.addEventListener('change', handleChange);
-        return () => mediaQuery.removeEventListener('change', handleChange);
-    }, [theme]);
-
-    useEffect(() => {
-        if (!auth) {
-            setError("Authentication service is not available.");
-            return;
-        };
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-            if (currentUser) {
-                setUser(currentUser);
-                if (currentUser.email && typeof ADMIN_TEAMS !== 'undefined') {
-                    setAdminRole(ADMIN_TEAMS[currentUser.email] || null);
-                } else {
-                    setAdminRole(null);
-                }
-            } else {
-                signInAnonymously(auth).catch(err => {
-                    console.error("Anonymous sign-in failed:", err);
-                });
-            }
-        });
-        return () => unsubscribe();
-    }, []);
-
-    useEffect(() => {
-        if (!db) return;
-        const meetsCollectionRef = collection(db, "meets");
-        const unsubscribe = onSnapshot(meetsCollectionRef, (querySnapshot) => {
-            const meetsList = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data(),
-                date: doc.data().date.toDate()
-            })).sort((a,b) => a.date - b.date);
-
-            setAllMeets(meetsList);
-
-            if (!selectedMeetId && meetsList.length > 0) {
-                const now = new Date();
-                const upcomingMeet = meetsList.find(meet => meet.date >= now);
-                setSelectedMeetId(upcomingMeet ? upcomingMeet.id : meetsList[meetsList.length - 1].id);
-            }
-            setLoading(false);
-        }, (err) => {
-            console.error("Error fetching meets:", err);
-            setError("Could not load meets from the database.");
-            setLoading(false);
-        });
-        return () => unsubscribe();
-    }, [db]);
-
-    useEffect(() => {
-        if (!db || !selectedMeetId) {
-            setMeetData(null);
-            return;
-        };
-
-        const meetInfo = allMeets.find(m => m.id === selectedMeetId);
-        if (!meetInfo) return;
-
-        const eventsQuery = query(collection(db, "meet_events"), where("meetId", "==", selectedMeetId));
-
-        const unsubscribe = onSnapshot(eventsQuery, (querySnapshot) => {
-             const eventsList = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })).sort((a,b) => a.eventNumber - b.eventNumber);
-
-            setMeetData({
-                ...meetInfo,
-                events: eventsList
-            });
-
-        }, (err) => {
-            console.error(`Error fetching events for meet ${selectedMeetId}:`, err);
-            setError(`Could not load events for the selected meet.`);
-        });
-
-        return () => unsubscribe();
-    }, [db, selectedMeetId, allMeets]);
-
-
-    const handleSignIn = () => {
-        if (!auth || !provider) return;
-        signInWithPopup(auth, provider).catch(err => console.error("Sign-in failed:", err));
-    };
-
-    const handleSignOut = () => auth && auth.signOut();
-
-    useEffect(() => {
-        if (!db || !selectedMeetId) return;
-        const docRef = doc(db, "meet_status", selectedMeetId);
-        const unsubscribe = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                setCurrentEvent(docSnap.data());
-            } else {
-                 setDoc(docRef, { eventNumber: 1, heatNumber: 1, isTracking: false });
-            }
-        });
-        return () => unsubscribe();
-    }, [db, selectedMeetId]);
-
-    const updateMeetStatus = async (statusUpdate) => {
-        if (!db || !adminRole || !selectedMeetId) return;
-        const docRef = doc(db, "meet_status", selectedMeetId);
-        await updateDoc(docRef, statusUpdate);
-    };
-
-    useEffect(() => setFavorites(loadFavoritesFromLocalStorage()), []);
-    useEffect(() => saveFavoritesToLocalStorage(favorites), [favorites]);
-
-    const toggleFavorite = (swimmerId) => {
-        setFavorites(prev => {
-            const newFavs = new Set(prev);
-            if (newFavs.has(swimmerId)) {
-                newFavs.delete(swimmerId);
-            } else {
-                newFavs.add(swimmerId);
-            }
-            return newFavs;
-        });
-    };
-
-    const favoriteResults = useMemo(() => {
-        if (!meetData || !meetData.events) return [];
-        const results = {}; // key will be swimmer ID
-        const abbreviate = name => (name || '').replace("Freestyle", "Free").replace("Backstroke", "Back").replace("Breaststroke", "Breast").replace("Butterfly", "Fly");
-        meetData.events.forEach(event => {
-            if(event.heats) {
-                event.heats.forEach(heat => {
-                    heat.lanes.forEach(lane => {
-                        if (favorites.has(lane.id)) {
-                            if (!results[lane.id]) {
-                                results[lane.id] = {
-                                    id: lane.id,
-                                    name: `${lane.firstName} ${lane.lastName}`,
-                                    team: lane.team,
-                                    events: []
-                                };
-                            }
-                            results[lane.id].events.push(`E${event.eventNumber} H${heat.heatNumber} L${lane.lane}: ${abbreviate(event.name)}`);
-                        }
-                    });
-                });
-            }
-        });
-        return Object.values(results).sort((a,b) => a.name.localeCompare(b.name));
-    }, [favorites, meetData]);
-
-    const swimmerSearchResults = useMemo(() => {
-        if (!swimmerSearch.trim() || !meetData || !meetData.events) return [];
-        const query = swimmerSearch.toLowerCase();
-        const results = {}; // key will be swimmer ID
-        const abbreviate = name => (name || '').replace("Freestyle", "Free").replace("Backstroke", "Back").replace("Breaststroke", "Breast").replace("Butterfly", "Fly");
-        meetData.events.forEach(event => {
-             if(event.heats) {
-                event.heats.forEach(heat => {
-                    heat.lanes.forEach(lane => {
-                        const fullName = `${lane.firstName} ${lane.lastName}`;
-                        if (fullName.toLowerCase().includes(query)) {
-                            if (!results[lane.id]) {
-                                results[lane.id] = {
-                                    id: lane.id,
-                                    name: fullName,
-                                    team: lane.team,
-                                    events: []
-                                };
-                            }
-                            results[lane.id].events.push(`E${event.eventNumber} H${heat.heatNumber} L${lane.lane}: ${abbreviate(event.name)}`);
-                        }
-                    });
-                });
-            }
-        });
-        return Object.values(results).sort((a,b) => a.name.localeCompare(b.name));
-    }, [swimmerSearch, meetData]);
-
-    const eventSearchResults = useMemo(() => {
-        if (!eventSearch.trim() || !meetData || !meetData.events) return [];
-         const query = eventSearch.toLowerCase();
-         return meetData.events.filter(event =>
-            event.name.toLowerCase().includes(query) ||
-            String(event.eventNumber).includes(query)
-         );
-    }, [eventSearch, meetData]);
-
-    if (loading) {
-        return <div className="flex justify-center items-center h-screen"><h4 className="text-lg font-semibold">Loading Meet Data...</h4></div>;
-    }
-
-    if (error) {
-        return <div className="container mx-auto mt-4"><div className="p-4 text-red-800 bg-red-100 border border-red-200 rounded-md">{error}</div></div>;
-    }
-
-    const renderActiveTab = () => {
-        switch (activeTab) {
-            case 'schedule':
-                 return meetData ? <ScheduleView events={meetData.events} favorites={favorites} currentEvent={currentEvent} toggleFavorite={toggleFavorite} adminRole={adminRole} updateMeetStatus={updateMeetStatus} /> : <p className="text-center">Select a meet to view the schedule.</p>;
-            case 'searchEvents':
-                return meetData ? <SearchEventView search={eventSearch} setSearch={setEventSearch} results={eventSearchResults} favorites={favorites} currentEvent={currentEvent} toggleFavorite={toggleFavorite} /> : <p className="text-center">Select a meet to search events.</p>;
-            case 'searchSwimmers':
-                return meetData ? <SearchSwimmerView search={swimmerSearch} setSearch={setSwimmerSearch} results={swimmerSearchResults} favorites={favorites} toggleFavorite={toggleFavorite} /> : <p className="text-center">Select a meet to search swimmers.</p>;
-            case 'admin':
-                return <AdminView adminRole={adminRole} allMeets={allMeets} showNotification={showNotification}/>;
-            case 'settings':
-                return <SettingsView theme={theme} setTheme={setTheme} user={user} isAuthorized={!!adminRole} handleSignIn={handleSignIn} handleSignOut={handleSignOut} />;
-            default:
-                return meetData ? <ScheduleView events={meetData.events} favorites={favorites} currentEvent={currentEvent} toggleFavorite={toggleFavorite} adminRole={adminRole} updateMeetStatus={updateMeetStatus}/> : <p className="text-center">Select a meet to view the schedule.</p>;
-        }
-    };
-
-    return (
-        <>
-            <Notification show={notification.show} message={notification.message} type={notification.type} />
-            <div className="container mx-auto px-4 py-4">
-                <header className="text-center mb-4">
-                    {activeTab !== 'admin' && meetData ? (
-                         <h1 className="font-bold text-3xl text-primary">{meetData.name}</h1>
-                    ): (
-                         <h1 className="font-bold text-3xl text-primary">Swim Meet Live</h1>
-                    )}
-
-                    {allMeets.length > 0 && activeTab !== 'admin' && (
-                        <div className="mt-2 max-w-md mx-auto">
-                             <select className="w-full p-2 border border-border-light dark:border-border-dark rounded-md text-sm bg-surface-light dark:bg-surface-dark text-text-dark dark:text-text-light" value={selectedMeetId || ""} onChange={e => setSelectedMeetId(e.target.value)}>
-                                {allMeets.map(meet => (
-                                    <option key={meet.id} value={meet.id}>
-                                        {meet.name} - {meet.date.toLocaleDateString()}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
-                </header>
-
-                {activeTab !== 'settings' && activeTab !== 'admin' && meetData && (
-                     <div className="border border-border-light dark:border-border-dark rounded-lg overflow-hidden mb-3">
-                        <h2 className="accordion-header">
-                            <button
-                                className="flex justify-between items-center w-full p-4 font-semibold text-left bg-surface-light dark:bg-surface-dark text-text-dark dark:text-text-light"
-                                onClick={() => setFavoritesOpen(!favoritesOpen)}
-                            >
-                                <span>My Favorites ({favorites.size})</span>
-                                <Icon name={favoritesOpen ? 'chevron-up' : 'chevron-down'} className={`transition-transform duration-200 ${favoritesOpen ? 'rotate-180' : ''}`}/>
-                            </button>
-                        </h2>
-                        {favoritesOpen && (
-                            <div className="p-4 bg-white dark:bg-surface-dark border-t border-border-light dark:border-border-dark">
-                                {favoriteResults.length > 0 ? (
-                                    <div className="divide-y divide-border-light dark:divide-border-dark -mx-4">
-                                        {favoriteResults.map(swimmer => (
-                                            <div key={swimmer.id} className="px-4 py-3 flex justify-between items-start">
-                                                <div className="mr-auto">
-                                                    <div className="font-bold">{swimmer.name}</div>
-                                                    <div className="text-sm text-gray-500 dark:text-gray-400">
-                                                        {swimmer.events.map((eventStr, index) => <div key={index}>{eventStr}</div>)}
-                                                    </div>
-                                                </div>
-                                                <button className="p-2 -m-2" onClick={() => toggleFavorite(swimmer.id)}>
-                                                    <div className="text-secondary"><Icon name="star" type="fas" /></div>
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : <p className="text-center text-gray-500 dark:text-gray-400 mb-0">No favorites added yet. Tap the star next to a swimmer's name to add them.</p>}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                <main>
-                    {renderActiveTab()}
-                </main>
-            </div>
-            <nav className="fixed bottom-0 left-0 w-full bg-surface-light dark:bg-surface-dark border-t border-border-light dark:border-border-dark z-30">
-                <div className="flex justify-around items-center">
-                    <button onClick={() => setActiveTab('schedule')} className={`flex-1 text-center py-2 px-1 rounded-lg text-sm transition-colors ${activeTab === 'schedule' ? 'bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary-light' : 'text-gray-600 dark:text-gray-400'}`}><div><Icon name="list-ol" /></div><div className="text-xs">Schedule</div></button>
-                    <button onClick={() => setActiveTab('searchEvents')} className={`flex-1 text-center py-2 px-1 rounded-lg text-sm transition-colors ${activeTab === 'searchEvents' ? 'bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary-light' : 'text-gray-600 dark:text-gray-400'}`}><div><Icon name="magnifying-glass" /></div><div className="text-xs">Events</div></button>
-                    <button onClick={() => setActiveTab('searchSwimmers')} className={`flex-1 text-center py-2 px-1 rounded-lg text-sm transition-colors ${activeTab === 'searchSwimmers' ? 'bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary-light' : 'text-gray-600 dark:text-gray-400'}`}><div><Icon name="user" /></div><div className="text-xs">Swimmers</div></button>
-                    {adminRole && <button onClick={() => setActiveTab('admin')} className={`flex-1 text-center py-2 px-1 rounded-lg text-sm transition-colors ${activeTab === 'admin' ? 'bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary-light' : 'text-gray-600 dark:text-gray-400'}`}><div><Icon name="user-shield" /></div><div className="text-xs">Admin</div></button>}
-                    <button onClick={() => setActiveTab('settings')} className={`flex-1 text-center py-2 px-1 rounded-lg text-sm transition-colors ${activeTab === 'settings' ? 'bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary-light' : 'text-gray-600 dark:text-gray-400'}`}><div><Icon name="gear" /></div><div className="text-xs">Settings</div></button>
-                </div>
-            </nav>
-        </>
-    );
-}
-
-// --- View Components ---
-
-function Notification({ show, message, type }) {
-    const baseClasses = "fixed left-1/2 -translate-x-1/2 z-50 p-4 rounded-md shadow-lg transition-all duration-300";
-    const typeClasses = {
-        info: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-        success: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-        warning: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-        danger: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-    };
-    const showClass = show ? 'opacity-100 top-16' : 'opacity-0 top-5 pointer-events-none';
-
-    return (
-        <div className={`${baseClasses} ${typeClasses[type] || typeClasses.info} ${showClass}`} role="alert">
-            {message}
-        </div>
-    );
-}
-
-function ScheduleView({ events, favorites, currentEvent, toggleFavorite, adminRole, updateMeetStatus }) {
-    if (!events || events.length === 0) {
-        return <p className="text-center text-gray-500">No events found for this meet.</p>
-    }
-
-    const handleNextEvent = () => {
-        const nextEventNumber = Math.min(events.length, currentEvent.eventNumber + 1);
-        updateMeetStatus({ eventNumber: nextEventNumber, heatNumber: 1 });
-    };
-    const handlePrevEvent = () => {
-        const prevEventNumber = Math.max(1, currentEvent.eventNumber - 1);
-        updateMeetStatus({ eventNumber: prevEventNumber, heatNumber: 1 });
-    };
-    const toggleTracking = () => {
-        updateMeetStatus({ isTracking: !currentEvent.isTracking });
-    };
-
-
-    return (
-        <div>
-            {adminRole && (
-                 <div className="sticky top-0 bg-surface-light/80 dark:bg-surface-dark/80 backdrop-blur-sm z-10 p-2 rounded-lg border border-border-light dark:border-border-dark mb-4 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                        <button onClick={handlePrevEvent} className="p-2 rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"><Icon name="backward-step"/></button>
-                        <div className="text-center">
-                            <div className="font-semibold text-sm">Event {currentEvent.eventNumber}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">Heat {currentEvent.heatNumber}</div>
-                        </div>
-                        <button onClick={handleNextEvent} className="p-2 rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"><Icon name="forward-step"/></button>
-                    </div>
-                    <button onClick={toggleTracking} className={`py-2 px-3 rounded-md font-semibold text-xs flex-shrink-0 ${currentEvent.isTracking ? 'bg-yellow-500 text-black' : 'bg-blue-600 text-white'}`}>
-                        {currentEvent.isTracking ? 'Stop Tracking' : 'Start Tracking'}
-                    </button>
-                 </div>
-            )}
-            {currentEvent.isTracking && !adminRole && (
-                <div className="bg-primary text-white p-3 rounded-lg mb-4 shadow-md text-center">
-                    <h2 className="text-sm font-bold uppercase tracking-wider">Now Swimming</h2>
-                    <div className="text-lg mt-1 font-semibold">Event #{currentEvent.eventNumber} - Heat #{currentEvent.heatNumber}</div>
-                </div>
-            )}
-            {events.map(event => (
-                <EventCard key={event.id} event={event} favorites={favorites} currentEvent={currentEvent} toggleFavorite={toggleFavorite} />
-            ))}
-        </div>
-    );
-}
-
-function SearchEventView({ search, setSearch, results, favorites, currentEvent, toggleFavorite }) {
-    return (
-        <div>
-            <input type="text" className="w-full p-3 mb-3 border border-border-light dark:border-border-dark rounded-md bg-surface-light dark:bg-surface-dark focus:ring-2 focus:ring-primary focus:border-primary outline-none" placeholder="Search by event name or number..." value={search} onChange={e => setSearch(e.target.value)} />
-            {search && results.length === 0 && <p className="text-center text-gray-500">No events found.</p>}
-            {results.map(event => (
-                <EventCard key={event.id} event={event} favorites={favorites} currentEvent={currentEvent} toggleFavorite={toggleFavorite} />
-            ))}
-        </div>
-    );
-}
-
-function SearchSwimmerView({ search, setSearch, results, favorites, toggleFavorite }) {
-    return (
-        <div>
-            <input type="text" className="w-full p-3 mb-3 border border-border-light dark:border-border-dark rounded-md bg-surface-light dark:bg-surface-dark focus:ring-2 focus:ring-primary focus:border-primary outline-none" placeholder="Search for a swimmer..." value={search} onChange={e => setSearch(e.target.value)} />
-            {search && results.length === 0 && <p className="text-center text-gray-500">No swimmers found.</p>}
-            <div className="bg-surface-light dark:bg-surface-dark rounded-lg shadow-md overflow-hidden border border-border-light dark:border-border-dark">
-                <ul className="divide-y divide-border-light dark:divide-border-dark">
-                    {results.map(swimmer => (
-                        <li key={swimmer.id} className="p-4 flex justify-between items-start">
-                            <div className="mr-auto">
-                                <div className="font-bold">{swimmer.name} ({swimmer.team})</div>
-                                <div className="text-sm text-gray-500 dark:text-gray-400">
-                                    {swimmer.events.map((eventStr, index) => <div key={index}>{eventStr}</div>)}
-                                </div>
-                            </div>
-                            <button className="p-2 -m-2" onClick={() => toggleFavorite(swimmer.id)}>
-                                <div className={`${favorites.has(swimmer.id) ? 'text-secondary' : 'text-gray-400 dark:text-gray-500'}`}>
-                                    <Icon name="star" type={favorites.has(swimmer.id) ? 'fas' : 'far'} />
-                                </div>
-                            </button>
-                        </li>
-                    ))}
-                </ul>
-            </div>
-        </div>
-    );
-}
-
-function AdminView({ adminRole, allMeets, showNotification }) {
-    const [adminSubView, setAdminSubView] = useState('meets');
-
-    if (!adminRole) {
-        return <div className="p-4 text-yellow-800 bg-yellow-100 border border-yellow-200 rounded-md">You are not authorized to view this page.</div>;
-    }
-
-    const renderSubView = () => {
-        switch(adminSubView) {
-            case 'meets':
-                return <MeetManagement showNotification={showNotification} allMeets={allMeets} />;
-            case 'library':
-                return <EventLibraryManagement adminRole={adminRole} showNotification={showNotification} />;
-            case 'schedule':
-                return <ScheduleManagement allMeets={allMeets} showNotification={showNotification} />;
-            case 'rosters':
-                 return <RosterManagement adminRole={adminRole} showNotification={showNotification} />;
-            case 'entries':
-                 return <EntryManagement adminRole={adminRole} allMeets={allMeets} showNotification={showNotification} />;
-            default:
-                return null;
-        }
-    };
-
-    const navLinkClasses = "block w-full text-center px-4 py-2 rounded-md font-semibold text-sm";
-    const activeNavLinkClasses = "bg-primary text-white";
-    const inactiveNavLinkClasses = "bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600";
-
-    return (
-        <div className="admin-view">
-            <h2 className="text-xl font-bold mb-3">Admin Panel</h2>
-            <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 mb-4">
-                <li><button className={`${navLinkClasses} ${adminSubView === 'meets' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('meets')}>Meets</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'library' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('library')}>Library</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'schedule' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('schedule')}>Schedule</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'rosters' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('rosters')}>Rosters</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'entries' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('entries')}>Entries</button></li>
-            </ul>
-            <div className="bg-surface-light dark:bg-surface-dark rounded-lg shadow-md border border-border-light dark:border-border-dark">
-                <div className="p-4">
-                    {renderSubView()}
-                </div>
-            </div>
-        </div>
-    );
-}
-
-// --- Reusable Admin Components ---
-const AdminInput = ({ label, id, ...props }) => (
-    <div>
-        <label htmlFor={id} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
-        <input id={id} className="w-full p-2 border border-border-light dark:border-border-dark rounded-md bg-surface-light dark:bg-surface-dark text-text-dark dark:text-text-light focus:ring-2 focus:ring-primary focus:border-primary outline-none" {...props} />
-    </div>
-);
-const AdminSelect = ({ label, id, children, ...props }) => (
-     <div>
-        <label htmlFor={id} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
-        <select id={id} className="w-full p-2 border border-border-light dark:border-border-dark rounded-md bg-surface-light dark:bg-surface-dark text-text-dark dark:text-text-light focus:ring-2 focus:ring-primary focus:border-primary outline-none" {...props}>
-            {children}
-        </select>
-    </div>
-);
-const AdminButton = ({ children, onClick, type = 'button', variant = 'primary', className = '', ...props }) => {
-    const baseClasses = "w-full text-center px-4 py-2 rounded-md font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
-    const variants = {
-        primary: "bg-primary text-white hover:bg-green-700",
-        secondary: "bg-gray-500 dark:bg-gray-600 text-white hover:bg-gray-600 dark:hover:bg-gray-500",
-        outline: "border border-current text-primary hover:bg-primary/10 dark:hover:bg-primary/20",
-        'outline-success': "border border-green-500 text-green-600 hover:bg-green-500/10",
-    };
-    return (
-        <button type={type} onClick={onClick} className={`${baseClasses} ${variants[variant]} ${className}`} {...props}>
-            {children}
-        </button>
-    );
-};
-
-// --- Admin Sub-Views (Fully Converted) ---
+// NOTE: No longer initializing firebase here
 
 function MeetManagement({ showNotification, allMeets }) {
+    // ... MeetManagement component logic remains the same
     const [meetName, setMeetName] = useState("");
     const [meetDate, setMeetDate] = useState("");
     const [editingMeet, setEditingMeet] = useState(null);
@@ -699,6 +143,7 @@ function MeetManagement({ showNotification, allMeets }) {
 }
 
 function EventLibraryManagement({ adminRole, showNotification }) {
+    // ... EventLibraryManagement component logic remains the same
     const [eventName, setEventName] = useState("");
     const [eventLibrary, setEventLibrary] = useState([]);
     const [editingEvent, setEditingEvent] = useState(null);
@@ -834,6 +279,7 @@ function EventLibraryManagement({ adminRole, showNotification }) {
 }
 
 function ScheduleManagement({ allMeets, showNotification }) {
+    // ... ScheduleManagement component logic remains the same
     const [selectedMeetId, setSelectedMeetId] = useState("");
     const [eventLibrary, setEventLibrary] = useState([]);
     const [selectedLibraryEventId, setSelectedLibraryEventId] = useState("");
@@ -843,13 +289,6 @@ function ScheduleManagement({ allMeets, showNotification }) {
     const scheduleListRef = useRef(null);
     const sortableInstance = useRef(null);
     
-    const SortableStyles = () => (
-        <style>{`
-            .sortable-ghost { opacity: 0.4; background: #a3d4a2; }
-            .sortable-chosen { cursor: grabbing; }
-        `}</style>
-    );
-
     useEffect(() => {
         const unsubscribe = onSnapshot(collection(db, "event_library"), (snapshot) => {
             setEventLibrary(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -1018,7 +457,6 @@ function ScheduleManagement({ allMeets, showNotification }) {
     
     return (
         <>
-            <SortableStyles />
             <h5 className="font-semibold text-lg">Manage a Meet's Schedule</h5>
             <p className="text-sm text-gray-500 dark:text-gray-400">Assign library events, then reorder by dragging or editing the event number.</p>
             <div className="my-4 space-y-4">
@@ -1089,6 +527,7 @@ function ScheduleManagement({ allMeets, showNotification }) {
 }
 
 function RosterManagement({ adminRole, showNotification }) {
+    // ... RosterManagement component logic, with handleRemoveClick corrected
     const isSuperAdmin = adminRole === 'SUPERADMIN';
     const [managingTeam, setManagingTeam] = useState(isSuperAdmin ? "" : adminRole);
     const [roster, setRoster] = useState([]);
@@ -1123,34 +562,29 @@ function RosterManagement({ adminRole, showNotification }) {
         resetForm();
     };
     const handleEditClick = (swimmer) => setSwimmerForm(swimmer);
+
+    // FIXED: This function now only removes the swimmer from the roster
+    // and correctly warns the user about the scope of the action.
     const handleRemoveClick = async (swimmerToRemove) => {
         const result = await Swal.fire({
-            title: 'Are you sure?', text: `This will remove ${swimmerToRemove.firstName} ${swimmerToRemove.lastName} from the roster and all events they are entered in.`,
-            icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, delete them!'
+            title: 'Are you sure?',
+            text: `This removes ${swimmerToRemove.firstName} from the team roster. It does NOT remove them from any events they are already entered in.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Yes, remove from roster'
         });
         if(!result.isConfirmed) return;
         
-        const newRoster = roster.filter(s => s.id !== swimmerToRemove.id);
-        await setDoc(doc(db, 'rosters', managingTeam), { swimmers: newRoster });
-        
-        const allEventsSnap = await getDocs(query(collection(db, "meet_events")));
-        const batch = writeBatch(db);
-        allEventsSnap.forEach(eventDoc => {
-            const eventData = eventDoc.data();
-            if(eventData.heats) {
-                let heatsModified = false;
-                const newHeats = eventData.heats.map(heat => {
-                    const originalLaneCount = heat.lanes.length;
-                    const filteredLanes = heat.lanes.filter(lane => lane.id !== swimmerToRemove.id);
-                    if(originalLaneCount > filteredLanes.length) heatsModified = true;
-                    return {...heat, lanes: filteredLanes};
-                }).filter(heat => heat.lanes.length > 0);
-                if(heatsModified) batch.update(eventDoc.ref, { heats: newHeats });
-            }
-        });
-        await batch.commit();
-        showNotification("Swimmer removed from roster and all entries.", "success");
+        try {
+            const newRoster = roster.filter(s => s.id !== swimmerToRemove.id);
+            await setDoc(doc(db, 'rosters', managingTeam), { swimmers: newRoster });
+            showNotification("Swimmer removed from roster.", "success");
+        } catch (error) {
+            showNotification("Failed to remove swimmer from roster.", "danger");
+            console.error("Error removing swimmer:", error);
+        }
     };
+
     const handleFileUpload = (event) => {
         const file = event.target.files[0];
         if (!file) return;
@@ -1216,8 +650,8 @@ function RosterManagement({ adminRole, showNotification }) {
                             <li key={swimmer.id} className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-md flex justify-between items-center">
                                 <span className="font-medium">{swimmer.firstName} {swimmer.lastName} (Age: {swimmer.age}, {swimmer.gender})</span>
                                 <div className="flex items-center space-x-2">
-                                    <button className="text-gray-500 hover:text-gray-700" onClick={() => handleEditClick(swimmer)}><Icon name="pencil-alt"/></button>
-                                    <button className="text-red-500 hover:text-red-700" onClick={() => handleRemoveClick(swimmer)}><Icon name="trash"/></button>
+                                    <button className="text-gray-500 hover:text-gray-700" onClick={() => handleEditClick(swimmer)} title="Edit"><Icon name="pencil-alt"/></button>
+                                    <button className="text-red-500 hover:text-red-700" onClick={() => handleRemoveClick(swimmer)} title="Delete"><Icon name="trash"/></button>
                                 </div>
                             </li>
                         )) : <li className="p-3 text-center text-gray-500 dark:text-gray-400">No swimmers on this roster yet.</li>}
@@ -1229,6 +663,7 @@ function RosterManagement({ adminRole, showNotification }) {
 }
 
 function EntryManagement({ adminRole, allMeets, showNotification }) {
+    // ... EntryManagement component logic remains the same
     const isSuperAdmin = adminRole === 'SUPERADMIN';
     const [selectedMeetId, setSelectedMeetId] = useState("");
     const [managingTeam, setManagingTeam] = useState(isSuperAdmin ? "" : adminRole);
@@ -1238,7 +673,7 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
     const [eventsForMeet, setEventsForMeet] = useState([]);
     const [currentEntries, setCurrentEntries] = useState([]);
     const [editingEntry, setEditingEntry] = useState(null);
-
+    
     const selectedSwimmer = roster.find(s => s.id === selectedSwimmerId);
     const allTeams = useMemo(() => Object.values(ADMIN_TEAMS).filter(r => r !== 'SUPERADMIN').sort(), []);
 
@@ -1271,7 +706,7 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
             setEventsForMeet(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b)=>a.eventNumber-b.eventNumber));
         });
         return () => unsubscribe();
-    }, [db, selectedMeetId]);
+    }, [selectedMeetId]);
 
     useEffect(() => {
         if (managingTeam) {
@@ -1331,7 +766,6 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
 
     const handleEditEntry = (entry) => {
         setEditingEntry(entry);
-        // If team admin, ensure managingTeam is set correctly
         if (!isSuperAdmin) {
             setManagingTeam(entry.team);
         }
@@ -1382,7 +816,6 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
 
         const batch = writeBatch(db);
 
-        // If we are updating, we first remove the old entry
         if (editingEntry) {
             const oldEventRef = doc(db, "meet_events", editingEntry.eventId);
             const oldEventDoc = eventsForMeet.find(e => e.id === editingEntry.eventId);
@@ -1397,7 +830,6 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
             }
         }
         
-        // Now add the new/updated entry
         const newEventRef = doc(db, "meet_events", selectedEventId);
         const newEventDoc = eventsForMeet.find(e => e.id === selectedEventId);
         if (!newEventDoc) return;
@@ -1466,7 +898,12 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
             {managingTeam && selectedMeetId && (
                 <>
                     <div className="space-y-4">
-                        <AdminSelect label="3. Select Swimmer" id="swimmerSelect" value={selectedSwimmerId} onChange={e => setSelectedSwimmerId(e.target.value)}>
+                        <AdminSelect 
+                            label="3. Select Swimmer" 
+                            id="swimmerSelect" 
+                            value={selectedSwimmerId} 
+                            onChange={e => setSelectedSwimmerId(e.target.value)}
+                        >
                             <option value="" disabled>-- Choose from roster --</option>
                             {roster.map(swimmer => <option key={swimmer.id} value={swimmer.id}>{swimmer.firstName} {swimmer.lastName} (Age: {swimmer.age})</option>)}
                         </AdminSelect>
@@ -1506,90 +943,51 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
     );
 }
 
-function EventCard({ event, favorites, currentEvent, toggleFavorite }) {
-    const hasFavorite = (event.heats || []).some(h => h.lanes.some(l => favorites.has(l.id)));
-    const isCurrent = currentEvent.isTracking && event.eventNumber === currentEvent.eventNumber;
+function AdminView({ adminRole, allMeets, showNotification }) {
+    const [adminSubView, setAdminSubView] = useState('meets');
 
-    const cardClasses = [
-        "bg-surface-light dark:bg-surface-dark rounded-lg mb-3 border border-border-light dark:border-border-dark overflow-hidden transition-all",
-        hasFavorite ? "border-l-4 border-l-primary" : "",
-        isCurrent ? "border-2 border-primary dark:border-primary-light scale-[1.02]" : ""
-    ].join(" ");
+    if (!adminRole) {
+        return <div className="p-4 text-yellow-800 bg-yellow-100 border border-yellow-200 rounded-md">You are not authorized to view this page.</div>;
+    }
 
-    return (
-        <div className={cardClasses}>
-            <div className="p-4 border-b border-border-light dark:border-border-dark font-bold">
-                Event {event.eventNumber}: {event.name}
-            </div>
-            <div className="p-4 space-y-4">
-                {event.heats && event.heats.length > 0 ? event.heats.map(heat => (
-                    <div key={heat.heatNumber} className={`p-3 rounded-lg ${isCurrent && heat.heatNumber === currentEvent.heatNumber ? 'bg-primary/10 dark:bg-primary/20' : ''}`}>
-                        <h6 className="mb-2 font-semibold text-gray-600 dark:text-gray-400">Heat {heat.heatNumber}</h6>
-                        <ul className="divide-y divide-border-light dark:divide-border-dark -m-3">
-                            {heat.lanes.map(lane => (
-                                <li key={lane.id} className="p-3 flex justify-between items-center">
-                                    <div>
-                                      <strong className="font-semibold">Lane {lane.lane}:</strong> {`${lane.firstName} ${lane.lastName}`} <span className="text-gray-500">({lane.team})</span>
-                                    </div>
-                                    <button className="p-2 -m-2" onClick={() => toggleFavorite(lane.id)}>
-                                        <div className={`${favorites.has(lane.id) ? 'text-secondary' : 'text-gray-400 dark:text-gray-500'}`}>
-                                            <Icon name="star" type={favorites.has(lane.id) ? 'fas' : 'far'} />
-                                        </div>
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                )) : <p className="text-center text-gray-500">No heats or swimmers for this event yet.</p>}
-            </div>
-        </div>
-    );
-}
-
-function SettingsView({ theme, setTheme, user, isAuthorized, handleSignIn, handleSignOut }) {
-    const renderAccountSection = () => {
-        if (!user) return null;
-
-        if (user.isAnonymous) {
-            return (
-                <button className="w-full flex items-center justify-center px-4 py-2 rounded-md font-semibold text-sm bg-blue-600 text-white hover:bg-blue-700" onClick={handleSignIn}>
-                    <Icon name="google" type="fab" className="mr-2" /> Admin Sign-In
-                </button>
-            );
+    const renderSubView = () => {
+        switch(adminSubView) {
+            case 'meets':
+                return <MeetManagement showNotification={showNotification} allMeets={allMeets} />;
+            case 'library':
+                return <EventLibraryManagement adminRole={adminRole} showNotification={showNotification} />;
+            case 'schedule':
+                return <ScheduleManagement allMeets={allMeets} showNotification={showNotification} />;
+            case 'rosters':
+                 return <RosterManagement adminRole={adminRole} showNotification={showNotification} />;
+            case 'entries':
+                 return <EntryManagement adminRole={adminRole} allMeets={allMeets} showNotification={showNotification} />;
+            default:
+                return null;
         }
-
-        return (
-            <div className="space-y-3 text-center">
-                <p>Signed in as <span className="font-semibold">{user.email}</span></p>
-                {isAuthorized && <p className="text-green-600 dark:text-green-400 font-bold">You have admin privileges.</p>}
-                <button className="w-full px-4 py-2 rounded-md font-semibold text-sm bg-gray-500 text-white hover:bg-gray-600" onClick={handleSignOut}>Sign Out</button>
-            </div>
-        );
     };
 
+    const navLinkClasses = "block w-full text-center px-4 py-2 rounded-md font-semibold text-sm";
+    const activeNavLinkClasses = "bg-primary text-white";
+    const inactiveNavLinkClasses = "bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600";
+
     return (
-         <div className="settings-view space-y-4">
-            <h2 className="text-xl font-bold">Settings</h2>
+        <div className="admin-view">
+            <h2 className="text-xl font-bold mb-3">Admin Panel</h2>
+            <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 mb-4">
+                <li><button className={`${navLinkClasses} ${adminSubView === 'meets' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('meets')}>Meets</button></li>
+                <li><button className={`${navLinkClasses} ${adminSubView === 'library' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('library')}>Library</button></li>
+                <li><button className={`${navLinkClasses} ${adminSubView === 'schedule' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('schedule')}>Schedule</button></li>
+                <li><button className={`${navLinkClasses} ${adminSubView === 'rosters' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('rosters')}>Rosters</button></li>
+                <li><button className={`${navLinkClasses} ${adminSubView === 'entries' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('entries')}>Entries</button></li>
+            </ul>
             <div className="bg-surface-light dark:bg-surface-dark rounded-lg shadow-md border border-border-light dark:border-border-dark">
                 <div className="p-4">
-                    <h3 className="text-md font-semibold mb-2">Theme</h3>
-                     <div className="flex w-full rounded-md shadow-sm">
-                        <button onClick={() => setTheme('light')} className={`flex-1 px-4 py-2 text-sm font-medium rounded-l-md border ${theme === 'light' ? 'bg-primary text-white border-primary' : 'bg-transparent border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>Light</button>
-                        <button onClick={() => setTheme('dark')} className={`flex-1 px-4 py-2 text-sm font-medium border-t border-b ${theme === 'dark' ? 'bg-primary text-white border-primary' : 'bg-transparent border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>Dark</button>
-                        <button onClick={() => setTheme('system')} className={`flex-1 px-4 py-2 text-sm font-medium rounded-r-md border ${theme === 'system' ? 'bg-primary text-white border-primary' : 'bg-transparent border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>System</button>
-                    </div>
-                </div>
-            </div>
-             <div className="bg-surface-light dark:bg-surface-dark rounded-lg shadow-md border border-border-light dark:border-border-dark">
-                <div className="p-4">
-                    <h3 className="text-md font-semibold mb-2 text-center">Account</h3>
-                    {renderAccountSection()}
+                    {renderSubView()}
                 </div>
             </div>
         </div>
     );
 }
 
-const container = document.getElementById('root');
-const root = ReactDOM.createRoot(container);
-root.render(<App />);
+export default AdminView;
