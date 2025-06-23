@@ -2,7 +2,7 @@
   "name": "swim-meet-live-vite",
   "homepage": "https://trantechsolutions.github.io/swim-meet-app",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
