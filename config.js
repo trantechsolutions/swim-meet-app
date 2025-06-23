@@ -1,6 +1,6 @@
 // --- App Version ---
 // Change this version number to force a refresh of cached CSS and JS files.
-const APP_VERSION = "1.3.6";
+const APP_VERSION = "1.3.8";
 
 // --- Firebase Config ---
 // This object contains your Firebase project's credentials.

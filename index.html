@@ -25,13 +25,16 @@
     <!-- Bootstrap JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" xintegrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
     <!-- Firebase SDKs -->
     <script type="module">
         // This script block attaches the Firebase functions to the window object.
         // It does NOT initialize the app. Initialization happens in app.js.
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, query, where, doc, onSnapshot, setDoc, addDoc, getDocs, deleteDoc, Timestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, query, where, doc, writeBatch, onSnapshot, setDoc, addDoc, getDocs, deleteDoc, updateDoc, Timestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         window.firebase = {
             initializeApp,
@@ -45,11 +48,13 @@
             query,
             where,
             doc,
+            writeBatch, 
             onSnapshot,
             setDoc,
             addDoc,
             getDocs,
             deleteDoc,
+            updateDoc,
             Timestamp
         };
     </script>
