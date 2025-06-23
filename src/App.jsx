@@ -4,6 +4,7 @@ import { firebaseConfig, ADMIN_TEAMS } from './config.js';
 // --- Component and View Imports ---
 import Icon from './components/Icon.jsx';
 import Notification from './components/Notification.jsx';
+import ReloadPrompt from './components/ReloadPrompt.jsx';
 import ScheduleView from './views/ScheduleView.jsx';
 import { SearchEventView, SearchSwimmerView } from './views/SearchView.jsx';
 import AdminView from './views/AdminView.jsx';
@@ -52,6 +53,7 @@ function App() {
     const [error, setError] = useState(null);
     const [allMeets, setAllMeets] = useState([]);
     const [selectedMeetId, setSelectedMeetId] = useState(null);
+    const [allSwimmers, setAllSwimmers] = useState({});
 
     const showNotification = (message, type = 'info') => {
         setNotification({ show: true, message, type });
@@ -96,6 +98,24 @@ function App() {
                     console.error("Anonymous sign-in failed:", err);
                 });
             }
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        if (!db) return;
+        // This listener fetches all swimmers from all team rosters
+        const rostersRef = collection(db, "rosters");
+        const unsubscribe = onSnapshot(rostersRef, (querySnapshot) => {
+            const swimmersMap = {};
+            querySnapshot.forEach(doc => {
+                const teamName = doc.id;
+                const roster = doc.data().swimmers || [];
+                roster.forEach(swimmer => {
+                    swimmersMap[swimmer.id] = { ...swimmer, team: teamName };
+                });
+            });
+            setAllSwimmers(swimmersMap);
         });
         return () => unsubscribe();
     }, []);
@@ -191,30 +211,46 @@ function App() {
     };
 
     const favoriteResults = useMemo(() => {
-        if (!meetData || !meetData.events) return [];
-        const results = {};
-        const abbreviate = name => (name || '').replace("Freestyle", "Free").replace("Backstroke", "Back").replace("Breaststroke", "Breast").replace("Butterfly", "Fly");
-        meetData.events.forEach(event => {
-            if(event.heats) {
-                event.heats.forEach(heat => {
-                    heat.lanes.forEach(lane => {
-                        if (favorites.has(lane.id)) {
-                            if (!results[lane.id]) {
-                                results[lane.id] = {
-                                    id: lane.id,
-                                    name: `${lane.firstName} ${lane.lastName}`,
-                                    team: lane.team,
-                                    events: []
-                                };
-                            }
-                            results[lane.id].events.push(`E${event.eventNumber} H${heat.heatNumber} L${lane.lane}: ${abbreviate(event.name)}`);
-                        }
-                    });
+        const favoritedIds = Array.from(favorites);
+
+        return favoritedIds.map(swimmerId => {
+            // 1. Get the swimmer's global details from our new allSwimmers state
+            const swimmerDetails = allSwimmers[swimmerId];
+            
+            if (!swimmerDetails) {
+                // Return a placeholder if the global roster hasn't loaded yet
+                return { id: swimmerId, name: 'Loading swimmer...', team: '', events: [] };
+            }
+
+            // 2. Find events for this swimmer ONLY in the currently selected meet
+            const eventsInCurrentMeet = [];
+            if (meetData && meetData.events) {
+                const abbreviate = name => (name || '').replace("Freestyle", "Free").replace("Backstroke", "Back").replace("Breaststroke", "Breast").replace("Butterfly", "Fly");
+                meetData.events.forEach(event => {
+                    if (event.heats) {
+                        event.heats.forEach(heat => {
+                            heat.lanes.forEach(lane => {
+                                if (lane.id === swimmerId) {
+                                    eventsInCurrentMeet.push(`E${event.eventNumber} H${heat.heatNumber} L${lane.lane}: ${abbreviate(event.name)}`);
+                                }
+                            });
+                        });
+                    }
                 });
             }
-        });
-        return Object.values(results).sort((a,b) => a.name.localeCompare(b.name));
-    }, [favorites, meetData]);
+
+            // 3. Return the combined data
+            return {
+                id: swimmerId,
+                name: `${swimmerDetails.firstName} ${swimmerDetails.lastName}`,
+                team: swimmerDetails.team,
+                // The event list will be empty if the swimmer isn't in the current meet
+                events: eventsInCurrentMeet,
+                isInCurrentMeet: eventsInCurrentMeet.length > 0
+            };
+        }).sort((a,b) => a.name.localeCompare(b.name));
+
+    }, [favorites, allSwimmers, meetData]);
 
     const swimmerSearchResults = useMemo(() => {
         if (!swimmerSearch.trim() || !meetData || !meetData.events) return [];
@@ -280,6 +316,7 @@ function App() {
 
     return (
         <div className="bg-bg-light dark:bg-bg-dark text-text-dark dark:text-text-light transition-colors duration-300 pb-20 min-h-screen">
+            <ReloadPrompt />
             <Notification show={notification.show} message={notification.message} type={notification.type} />
             <div className="container mx-auto px-4 py-4">
                 <header className="text-center mb-4">
@@ -326,9 +363,23 @@ function App() {
                                         {favoriteResults.map(swimmer => (
                                             <div key={swimmer.id} className="px-4 py-3 flex justify-between items-start">
                                                 <div className="mr-auto">
-                                                    <div className="font-bold">{swimmer.name}</div>
+                                                    <div className="font-bold flex items-center">
+                                                        <span>{swimmer.name}</span>
+                                                        {/* If swimmer is in the current meet, show a green dot indicator */}
+                                                        {swimmer.isInCurrentMeet && (
+                                                            <span 
+                                                                className="ml-2 h-2.5 w-2.5 bg-green-500 rounded-full" 
+                                                                title="Swimming in this meet">
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                     <div className="text-sm text-gray-500 dark:text-gray-400">
-                                                        {swimmer.events.map((eventStr, index) => <div key={index}>{eventStr}</div>)}
+                                                        {/* If the event list is empty, show a helpful message */}
+                                                        {swimmer.events.length > 0 ? (
+                                                            swimmer.events.map((eventStr, index) => <div key={index}>{eventStr}</div>)
+                                                        ) : (
+                                                            <p className="italic text-gray-400 dark:text-gray-500 mt-1">Not in this meet</p>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 {/* This button will now only render when the activeTab is 'searchSwimmers' */}

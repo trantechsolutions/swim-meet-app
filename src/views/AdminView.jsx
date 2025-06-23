@@ -21,6 +21,7 @@ function MeetManagement({ showNotification, allMeets }) {
     const [meetName, setMeetName] = useState("");
     const [meetDate, setMeetDate] = useState("");
     const [editingMeet, setEditingMeet] = useState(null);
+    const [lanesAvailable, setLanesAvailable] = useState(8); 
 
     const formatDateForInput = (date) => date.toISOString().split('T')[0];
 
@@ -28,12 +29,14 @@ function MeetManagement({ showNotification, allMeets }) {
         setEditingMeet(meet);
         setMeetName(meet.name);
         setMeetDate(formatDateForInput(meet.date));
+        setLanesAvailable(meet.lanesAvailable || 8);
     };
 
     const resetForm = () => {
         setMeetName("");
         setMeetDate("");
         setEditingMeet(null);
+        setLanesAvailable(8);
     };
 
     const handleDeleteClick = async (meetId, meetName) => {
@@ -65,13 +68,18 @@ function MeetManagement({ showNotification, allMeets }) {
             showNotification("Please provide a name and a date for the meet.", "warning");
             return;
         }
-        const date = new Date(meetDate);
+        const date = new Date(meetDate + 'T00:00:00');
+        const meetPayload = { 
+            name: meetName, 
+            date: Timestamp.fromDate(date),
+            lanesAvailable: parseInt(lanesAvailable, 10) || 8 // Ensure it's a number
+        };
         try {
             if (editingMeet) {
-                await updateDoc(doc(db, "meets", editingMeet.id), { name: meetName, date: Timestamp.fromDate(date) });
+                await updateDoc(doc(db, "meets", editingMeet.id), meetPayload);
                 showNotification("Meet updated successfully!", "success");
             } else {
-                await addDoc(collection(db, "meets"), { name: meetName, date: Timestamp.fromDate(date) });
+                await addDoc(collection(db, "meets"), meetPayload);
                 showNotification("Meet successfully added!", "success");
             }
             resetForm();
@@ -118,7 +126,10 @@ function MeetManagement({ showNotification, allMeets }) {
             <h5 className="font-semibold text-lg">{editingMeet ? 'Edit Meet' : 'Create New Meet'}</h5>
             <form onSubmit={handleFormSubmit} className="space-y-4 mt-2">
                 <AdminInput label="Meet Name" id="meetName" type="text" value={meetName} onChange={e => setMeetName(e.target.value)} />
-                <AdminInput label="Meet Date" id="meetDate" type="date" value={meetDate} onChange={e => setMeetDate(e.target.value)} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <AdminInput label="Meet Date" id="meetDate" type="date" value={meetDate} onChange={e => setMeetDate(e.target.value)} />
+                    <AdminInput label="Lanes Available" id="lanesAvailable" type="number" min="1" max="12" value={lanesAvailable} onChange={e => setLanesAvailable(e.target.value)} />
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <AdminButton type="submit">{editingMeet ? 'Update Meet' : 'Add Meet'}</AdminButton>
                     {editingMeet && <AdminButton type="button" variant="secondary" onClick={resetForm}>Cancel</AdminButton>}
@@ -662,14 +673,14 @@ function RosterManagement({ adminRole, showNotification }) {
     );
 }
 
-function EntryManagement({ adminRole, allMeets, showNotification }) {
-    // ... EntryManagement component logic remains the same
+function EntryManagement({ adminRole, allMeets, showNotification, selectedMeet }) {
     const isSuperAdmin = adminRole === 'SUPERADMIN';
     const [selectedMeetId, setSelectedMeetId] = useState("");
     const [managingTeam, setManagingTeam] = useState(isSuperAdmin ? "" : adminRole);
     const [roster, setRoster] = useState([]);
     const [selectedSwimmerId, setSelectedSwimmerId] = useState("");
     const [selectedEventId, setSelectedEventId] = useState("");
+    const [entryDetails, setEntryDetails] = useState({ heat: '', lane: '' });
     const [eventsForMeet, setEventsForMeet] = useState([]);
     const [currentEntries, setCurrentEntries] = useState([]);
     const [editingEntry, setEditingEntry] = useState(null);
@@ -762,6 +773,7 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
         setEditingEntry(null);
         setSelectedSwimmerId("");
         setSelectedEventId("");
+        setEntryDetails({ heat: '', lane: '' });
     };
 
     const handleEditEntry = (entry) => {
@@ -771,6 +783,7 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
         }
         setSelectedSwimmerId(entry.swimmerId);
         setSelectedEventId(entry.eventId);
+        setEntryDetails({ heat: entry.heatNumber, lane: entry.laneNumber });
         
         const adminView = document.querySelector('.admin-view');
         if (adminView) {
@@ -809,67 +822,83 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
     };
 
     const handleAddOrUpdateSwimmerToEvent = async () => {
-        if (!selectedSwimmer || !selectedEventId || !managingTeam || !selectedMeetId) {
+        const swimmer = roster.find(s => s.id === selectedSwimmerId);
+        if (!swimmer || !selectedEventId || !managingTeam || !selectedMeetId) {
             showNotification("Please select a meet, team, swimmer, and event.", "warning");
             return;
         }
 
-        const batch = writeBatch(db);
+        const eventRef = doc(db, "meet_events", selectedEventId);
+        const eventDoc = eventsForMeet.find(e => e.id === selectedEventId);
+        if (!eventDoc) return;
 
+        let newHeats = JSON.parse(JSON.stringify(eventDoc.heats || []));
+
+        // --- This block removes the old entry if we are in "edit mode" ---
         if (editingEntry) {
-            const oldEventRef = doc(db, "meet_events", editingEntry.eventId);
-            const oldEventDoc = eventsForMeet.find(e => e.id === editingEntry.eventId);
-            if (oldEventDoc) {
-                 const newHeats = oldEventDoc.heats
-                    .map(heat => ({
-                        ...heat,
-                        lanes: heat.lanes.filter(lane => lane.id !== editingEntry.swimmerId)
-                    }))
-                    .filter(heat => heat.lanes.length > 0);
-                 batch.update(oldEventRef, { heats: newHeats });
-            }
+            newHeats = newHeats.map(heat => ({
+                ...heat,
+                lanes: heat.lanes.filter(lane => lane.id !== editingEntry.swimmerId)
+            })).filter(heat => heat.lanes.length > 0);
         }
         
-        const newEventRef = doc(db, "meet_events", selectedEventId);
-        const newEventDoc = eventsForMeet.find(e => e.id === selectedEventId);
-        if (!newEventDoc) return;
-        
-        const alreadyEntered = (newEventDoc.heats || []).some(h => h.lanes.some(l => l.id === selectedSwimmer.id));
-        if (alreadyEntered && !(editingEntry && editingEntry.eventId === selectedEventId)) {
-            showNotification(`${selectedSwimmer.firstName} is already in this event.`, "danger");
-            return; 
-        }
+        const lanesAvailable = selectedMeet?.lanesAvailable || 8;
 
-        let newHeats = JSON.parse(JSON.stringify(newEventDoc.heats || []));
-        if (newHeats.length === 0) newHeats.push({ heatNumber: 1, lanes: [] });
-        
-        let laneAssigned = false;
-        for (const heat of newHeats) {
-            if (heat.lanes.length < 8) {
-                const occupiedLanes = new Set(heat.lanes.map(l => l.lane));
-                for (let i = 1; i <= 8; i++) {
-                    if (!occupiedLanes.has(i)) {
-                        heat.lanes.push({ ...selectedSwimmer, team: managingTeam, seedTime: "NT", lane: i });
-                        laneAssigned = true; break;
+        // --- Manual Assignment Logic ---
+        const manualHeat = parseInt(entryDetails.heat, 10);
+        const manualLane = parseInt(entryDetails.lane, 10);
+
+        if (manualHeat && manualLane) {
+            if (manualLane > lanesAvailable) {
+                showNotification(`Invalid lane. Only ${lanesAvailable} lanes are available for this meet.`, "danger");
+                return;
+            }
+
+            let targetHeat = newHeats.find(h => h.heatNumber === manualHeat);
+            if (!targetHeat) {
+                targetHeat = { heatNumber: manualHeat, lanes: [] };
+                newHeats.push(targetHeat);
+            }
+
+            const isOccupied = targetHeat.lanes.some(l => l.lane === manualLane);
+            if (isOccupied) {
+                showNotification(`Lane ${manualLane} in Heat ${manualHeat} is already occupied.`, "danger");
+                return;
+            }
+            
+            targetHeat.lanes.push({ ...swimmer, team: managingTeam, seedTime: "NT", lane: manualLane });
+
+        } else {
+            // --- Automatic Assignment Logic ---
+            let laneAssigned = false;
+            for (const heat of newHeats) {
+                if (heat.lanes.length < lanesAvailable) {
+                    const occupiedLanes = new Set(heat.lanes.map(l => l.lane));
+                    for (let i = 1; i <= lanesAvailable; i++) {
+                        if (!occupiedLanes.has(i)) {
+                            heat.lanes.push({ ...swimmer, team: managingTeam, seedTime: "NT", lane: i });
+                            laneAssigned = true;
+                            break;
+                        }
                     }
+                    if (laneAssigned) break;
                 }
-                if (laneAssigned) break;
+            }
+
+            if (!laneAssigned) {
+                newHeats.push({
+                    heatNumber: newHeats.length + 1,
+                    lanes: [{ ...swimmer, team: managingTeam, seedTime: "NT", lane: 1 }]
+                });
             }
         }
-
-        if (!laneAssigned) {
-            newHeats.push({
-                heatNumber: newHeats.length + 1,
-                lanes: [{ ...selectedSwimmer, team: managingTeam, seedTime: "NT", lane: 1 }]
-            });
-        }
         
+        newHeats.sort((a,b) => a.heatNumber - b.heatNumber);
         newHeats.forEach(heat => heat.lanes.sort((a, b) => a.lane - b.lane));
-        batch.update(newEventRef, { heats: newHeats });
-        
+
         try {
-            await batch.commit();
-            showNotification(`${selectedSwimmer.firstName} was ${editingEntry ? 'updated' : 'entered'} successfully.`, "success");
+            await updateDoc(eventRef, { heats: newHeats });
+            showNotification(`${swimmer.firstName} was ${editingEntry ? 'updated' : 'entered'} successfully.`, "success");
             cancelEdit();
         } catch (error) {
             showNotification(`Failed to ${editingEntry ? 'update' : 'add'} entry.`, "danger");
@@ -907,13 +936,17 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
                             <option value="" disabled>-- Choose from roster --</option>
                             {roster.map(swimmer => <option key={swimmer.id} value={swimmer.id}>{swimmer.firstName} {swimmer.lastName} (Age: {swimmer.age})</option>)}
                         </AdminSelect>
-                        <div>
-                            <AdminSelect label="4. Select Event" id="eventSelect" value={selectedEventId} onChange={e => setSelectedEventId(e.target.value)} disabled={!selectedSwimmerId}>
-                                <option value="" disabled>-- Choose an event --</option>
-                                {eligibleEvents.map(event => <option key={event.id} value={event.id}>E{event.eventNumber} - {event.name}</option>)}
-                            </AdminSelect>
-                            {!selectedSwimmerId && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Select a swimmer to see their eligible events.</p>}
+                        <AdminSelect label="4. Select Event" id="eventSelect" value={selectedEventId} onChange={e => setSelectedEventId(e.target.value)} disabled={!selectedSwimmerId}>
+                            <option value="" disabled>-- Choose an event --</option>
+                            {eligibleEvents.map(event => <option key={event.id} value={event.id}>E{event.eventNumber} - {event.name}</option>)}
+                        </AdminSelect>
+                        
+                        {/* Add the new optional input fields */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <AdminInput label="Heat (Optional)" id="heatNumber" type="number" min="1" placeholder="Auto" value={entryDetails.heat} onChange={e => setEntryDetails({...entryDetails, heat: e.target.value})} />
+                            <AdminInput label="Lane (Optional)" id="laneNumber" type="number" min="1" placeholder="Auto" value={entryDetails.lane} onChange={e => setEntryDetails({...entryDetails, lane: e.target.value})} />
                         </div>
+                        
                         <div className="flex space-x-2">
                            <AdminButton onClick={handleAddOrUpdateSwimmerToEvent} disabled={!selectedSwimmerId || !selectedEventId} variant="primary">
                                 {editingEntry ? 'Update Entry' : 'Add Entry'}
@@ -946,6 +979,13 @@ function EntryManagement({ adminRole, allMeets, showNotification }) {
 function AdminView({ adminRole, allMeets, showNotification }) {
     const [adminSubView, setAdminSubView] = useState('meets');
 
+    // Find the full object for the selected meet
+    const selectedMeetForEntries = allMeets.find(meet => meet.id === (
+        // A bit of logic to find the selected meet id from the entry management component's state
+        // This is a simplification; a more robust solution might use a shared state/context
+        adminSubView === 'entries' ? document.getElementById('meetSelectEntries')?.value : null
+    ));
+
     if (!adminRole) {
         return <div className="p-4 text-yellow-800 bg-yellow-100 border border-yellow-200 rounded-md">You are not authorized to view this page.</div>;
     }
@@ -961,7 +1001,7 @@ function AdminView({ adminRole, allMeets, showNotification }) {
             case 'rosters':
                  return <RosterManagement adminRole={adminRole} showNotification={showNotification} />;
             case 'entries':
-                 return <EntryManagement adminRole={adminRole} allMeets={allMeets} showNotification={showNotification} />;
+                 return <EntryManagement adminRole={adminRole} allMeets={allMeets} showNotification={showNotification} selectedMeet={selectedMeetForEntries} />;
             default:
                 return null;
         }
