@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { firebaseConfig, ADMIN_TEAMS } from './config.js';
+import { Toaster, toast } from 'react-hot-toast';
 
 // --- Component and View Imports ---
 import Icon from './components/Icon.jsx';
@@ -328,7 +329,7 @@ function App() {
             case 'searchSwimmers':
                 return meetData ? <SearchSwimmerView search={swimmerSearch} setSearch={setSwimmerSearch} results={swimmerSearchResults} favorites={favorites} toggleFavorite={toggleFavorite} /> : <p className="text-center">Select a meet to search swimmers.</p>;
             case 'admin':
-                return <AdminView adminRole={adminRole} allMeets={allMeets} showNotification={showNotification}/>;
+                return <AdminView adminRole={adminRole} allMeets={allMeets} toast={toast}/>;
             case 'settings':
                 return <SettingsView theme={theme} setTheme={setTheme} user={user} isAuthorized={!!adminRole} handleSignIn={handleSignIn} handleSignOut={handleSignOut} />;
             default:
@@ -338,8 +339,14 @@ function App() {
 
     return (
         <div className="bg-bg-light dark:bg-bg-dark text-text-dark dark:text-text-light transition-colors duration-300 pb-20 min-h-screen">
+            <Toaster 
+                position="top-center"
+                reverseOrder={false}
+                toastOptions={{
+                    className: 'dark:bg-surface-dark dark:text-text-light',
+                }}
+            />
             <ReloadPrompt />
-            <Notification show={notification.show} message={notification.message} type={notification.type} />
             <div className="container mx-auto px-4 py-4">
                 <header className="text-center mb-4">
                     {activeTab !== 'admin' && meetData ? (

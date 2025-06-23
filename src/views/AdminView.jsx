@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import Swal from 'sweetalert2';
 import Sortable from 'sortablejs';
+
+import useConfirm from '../hooks/useConfirm.jsx';
 
 // Firebase Imports
 import { db } from '../firebase.js'; // Use the new central file
@@ -16,7 +17,7 @@ import AdminSelect from '../components/admin/AdminSelect.jsx';
 
 // NOTE: No longer initializing firebase here
 
-function MeetManagement({ showNotification, allMeets }) {
+function MeetManagement({ toast, confirm, allMeets }) {
     // ... MeetManagement component logic remains the same
     const [meetName, setMeetName] = useState("");
     const [meetDate, setMeetDate] = useState("");
@@ -40,13 +41,12 @@ function MeetManagement({ showNotification, allMeets }) {
     };
 
     const handleDeleteClick = async (meetId, meetName) => {
-        const result = await Swal.fire({
+        const result = await confirm({
             title: 'Are you sure?',
-            text: `This will permanently delete "${meetName}" and all of its scheduled events. This action cannot be undone.`,
-            icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33',
-            cancelButtonColor: '#3085d6', confirmButtonText: 'Yes, delete it!'
+            message: `This will permanently delete "${meetName}" and all of its scheduled events. This action cannot be undone.`,
+            confirmText: 'Delete'
         });
-        if (result.isConfirmed) {
+        if (result) {
             try {
                 const eventsQuery = query(collection(db, "meet_events"), where("meetId", "==", meetId));
                 const eventDocs = await getDocs(eventsQuery);
@@ -54,9 +54,9 @@ function MeetManagement({ showNotification, allMeets }) {
                 eventDocs.forEach(doc => batch.delete(doc.ref));
                 batch.delete(doc(db, "meets", meetId));
                 await batch.commit();
-                showNotification(`"${meetName}" and all its events were deleted.`, 'success');
+                toast.success(`"${meetName}" and all its events were deleted.`);
             } catch (error) {
-                showNotification("Failed to delete meet and its events.", 'danger');
+                toast.error("Failed to delete meet and its events.");
                 console.error("Error deleting meet:", error);
             }
         }
@@ -64,48 +64,51 @@ function MeetManagement({ showNotification, allMeets }) {
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
-        if (!meetName.trim() || !meetDate) {
-            showNotification("Please provide a name and a date for the meet.", "warning");
-            return;
-        }
-        const date = new Date(meetDate + 'T00:00:00');
-        const meetPayload = { 
-            name: meetName, 
-            date: Timestamp.fromDate(date),
-            lanesAvailable: parseInt(lanesAvailable, 10) || 8 // Ensure it's a number
+        const meetPayload = {
+            name: meetName,
+            date: Timestamp.fromDate(new Date(meetDate + 'T00:00:00')),
+            lanesAvailable: parseInt(lanesAvailable, 10) || 8
         };
         try {
             if (editingMeet) {
                 await updateDoc(doc(db, "meets", editingMeet.id), meetPayload);
-                showNotification("Meet updated successfully!", "success");
+                toast.success("Meet updated successfully!");
             } else {
                 await addDoc(collection(db, "meets"), meetPayload);
-                showNotification("Meet successfully added!", "success");
+                toast.success("Meet successfully added!");
             }
             resetForm();
         } catch (error) {
-            showNotification("Failed to save meet.", "danger");
+            toast.error("Failed to save meet.");
         }
     };
 
     const handleCopyClick = async (meetToCopy) => {
-        const { value: formValues } = await Swal.fire({
+        const formValues = await confirm({
+            mode: 'form',
             title: `Copy Meet: ${meetToCopy.name}`,
-            html: `<input id="swal-input1" class="swal2-input" value="Copy of ${meetToCopy.name}">` +
-                  `<input id="swal-input2" type="date" class="swal2-input" value="${formatDateForInput(new Date())}">`,
-            focusConfirm: false,
-            preConfirm: () => [document.getElementById('swal-input1').value, document.getElementById('swal-input2').value]
+            confirmText: 'Copy Meet',
+            inputs: [
+                { name: 'newName', label: 'New Meet Name', defaultValue: `Copy of ${meetToCopy.name}` },
+                { name: 'newDate', label: 'New Meet Date', type: 'date', defaultValue: formatDateForInput(new Date()) },
+                { name: 'lanesAvailable', label: 'Lanes Available', type: 'number', defaultValue: meetToCopy.lanesAvailable || 8 }
+            ]
         });
+
         if (formValues) {
-            const [newName, newDate] = formValues;
-            if(!newName || !newDate) {
-                showNotification("New meet name and date are required.", "warning"); return;
+            const { newName, newDate, lanesAvailable } = formValues;
+            if (!newName || !newDate) {
+                toast.error("New meet name and date are required."); return;
             }
             try {
-                const newMeetRef = await addDoc(collection(db, "meets"), { name: newName, date: Timestamp.fromDate(new Date(newDate)) });
+                const newMeetRef = await addDoc(collection(db, "meets"), { 
+                    name: newName, 
+                    date: Timestamp.fromDate(new Date(newDate + 'T00:00:00')),
+                    lanesAvailable: parseInt(lanesAvailable, 10) || 8
+                });
                 const originalEventsQuery = query(collection(db, "meet_events"), where("meetId", "==", meetToCopy.id));
                 const originalEventsSnap = await getDocs(originalEventsQuery);
-                const originalEvents = originalEventsSnap.docs.map(d => ({...d.data(), id: d.id}));
+                const originalEvents = originalEventsSnap.docs.map(d => ({ ...d.data(), id: d.id }));
                 const batch = writeBatch(db);
                 originalEvents.forEach(event => {
                     const newEventRef = doc(collection(db, "meet_events"));
@@ -114,9 +117,9 @@ function MeetManagement({ showNotification, allMeets }) {
                     batch.set(newEventRef, newEventData);
                 });
                 await batch.commit();
-                showNotification(`Successfully copied meet and its schedule.`, 'success');
+                toast.success(`Successfully copied meet and its schedule.`);
             } catch (error) {
-                showNotification("Failed to copy meet.", "danger");
+                toast.error("Failed to copy meet.");
             }
         }
     };
@@ -153,7 +156,7 @@ function MeetManagement({ showNotification, allMeets }) {
     );
 }
 
-function EventLibraryManagement({ adminRole, showNotification }) {
+function EventLibraryManagement({ toast, confirm, adminRole }) {
     // ... EventLibraryManagement component logic remains the same
     const [eventName, setEventName] = useState("");
     const [eventLibrary, setEventLibrary] = useState([]);
@@ -177,31 +180,27 @@ function EventLibraryManagement({ adminRole, showNotification }) {
         setEventName(event.name);
     }
     const handleRemoveClick = async (eventId, eventName) => {
-        const result = await Swal.fire({
-            title: 'Are you sure?', text: `This will permanently delete "${eventName}" from the Event Library.`,
-            icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Yes, delete it!'
-        });
-        if(result.isConfirmed) {
-            try {
+        if (await confirm('Are you sure?', `This will permanently delete "${eventName}" from the Event Library.`)) {
+             try {
                 await deleteDoc(doc(db, "event_library", eventId));
-                showNotification("Library event deleted successfully.", "success");
+                toast.success("Library event deleted successfully.");
             } catch (error) {
-                 showNotification("Error deleting library event.", "danger");
+                 toast.error("Error deleting library event.");
             }
         }
     }
     const handleFormSubmit = async (e) => {
         e.preventDefault();
         if (!eventName.trim()) {
-            showNotification("Event name cannot be empty.", "warning"); return;
+            toast.warning("Event name cannot be empty."); return;
         }
         try {
             if(editingEvent) {
                 await updateDoc(doc(db, "event_library", editingEvent.id), { name: eventName });
-                showNotification("Library event updated successfully.", "success");
+                toast.success("Library event updated successfully.");
             } else {
                 await addDoc(collection(db, "event_library"), { name: eventName });
-                showNotification("Library event created successfully.", "success");
+                toast.error("Library event created successfully.");
             }
             resetForm();
         } catch (error) {
@@ -289,7 +288,7 @@ function EventLibraryManagement({ adminRole, showNotification }) {
     );
 }
 
-function ScheduleManagement({ allMeets, showNotification }) {
+function ScheduleManagement({ toast, confirm, allMeets }) {
     const [selectedMeetId, setSelectedMeetId] = useState("");
     const [eventLibrary, setEventLibrary] = useState([]);
     const [scheduledEvents, setScheduledEvents] = useState([]);
@@ -558,7 +557,7 @@ function ScheduleManagement({ allMeets, showNotification }) {
     );
 }
 
-function RosterManagement({ adminRole, showNotification }) {
+function RosterManagement({ toast, confirm, adminRole }) {
     // ... RosterManagement component logic, with handleRemoveClick corrected
     const isSuperAdmin = adminRole === 'SUPERADMIN';
     const [managingTeam, setManagingTeam] = useState(isSuperAdmin ? "" : adminRole);
@@ -997,50 +996,45 @@ function EntryManagement({ adminRole, allMeets, showNotification, selectedMeet }
     );
 }
 
-function AdminView({ adminRole, allMeets, showNotification }) {
+function AdminView({ toast, adminRole, allMeets }) {
+    const { confirm, ConfirmationModal } = useConfirm();
     const [adminSubView, setAdminSubView] = useState('meets');
 
-    // Find the full object for the selected meet
-    const selectedMeetForEntries = allMeets.find(meet => meet.id === (
-        // A bit of logic to find the selected meet id from the entry management component's state
-        // This is a simplification; a more robust solution might use a shared state/context
-        adminSubView === 'entries' ? document.getElementById('meetSelectEntries')?.value : null
-    ));
+    const [activeMeetId, setActiveMeetId] = useState(allMeets[0]?.id || "");
+    const selectedMeetForEntries = useMemo(() => allMeets.find(meet => meet.id === activeMeetId), [allMeets, activeMeetId]);
 
     if (!adminRole) {
         return <div className="p-4 text-yellow-800 bg-yellow-100 border border-yellow-200 rounded-md">You are not authorized to view this page.</div>;
     }
 
     const renderSubView = () => {
+        const props = { toast, confirm, adminRole, allMeets, activeMeetId, setActiveMeetId, selectedMeet: selectedMeetForEntries };
         switch(adminSubView) {
             case 'meets':
-                return <MeetManagement showNotification={showNotification} allMeets={allMeets} />;
+                return <MeetManagement {...props} />;
             case 'library':
-                return <EventLibraryManagement adminRole={adminRole} showNotification={showNotification} />;
+                return <EventLibraryManagement {...props}  />;
             case 'schedule':
-                return <ScheduleManagement allMeets={allMeets} showNotification={showNotification} />;
+                return <ScheduleManagement {...props}  />;
             case 'rosters':
-                 return <RosterManagement adminRole={adminRole} showNotification={showNotification} />;
+                 return <RosterManagement {...props}  />;
             case 'entries':
-                 return <EntryManagement adminRole={adminRole} allMeets={allMeets} showNotification={showNotification} selectedMeet={selectedMeetForEntries} />;
+                 return <EntryManagement {...props}  />;
             default:
                 return null;
         }
     };
 
-    const navLinkClasses = "block w-full text-center px-4 py-2 rounded-md font-semibold text-sm";
-    const activeNavLinkClasses = "bg-primary text-white";
-    const inactiveNavLinkClasses = "bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600";
-
     return (
         <div className="admin-view">
             <h2 className="text-xl font-bold mb-3">Admin Panel</h2>
+            <ConfirmationModal />
             <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 mb-4">
-                <li><button className={`${navLinkClasses} ${adminSubView === 'meets' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('meets')}>Meets</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'library' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('library')}>Library</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'schedule' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('schedule')}>Schedule</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'rosters' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('rosters')}>Rosters</button></li>
-                <li><button className={`${navLinkClasses} ${adminSubView === 'entries' ? activeNavLinkClasses : inactiveNavLinkClasses}`} onClick={() => setAdminSubView('entries')}>Entries</button></li>
+                <li><button className={`block w-full text-center px-4 py-2 rounded-md font-semibold text-sm ${adminSubView === 'meets' ? 'bg-primary text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`} onClick={() => setAdminSubView('meets')}>Meets</button></li>
+                <li><button className={`block w-full text-center px-4 py-2 rounded-md font-semibold text-sm ${adminSubView === 'library' ? 'bg-primary text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`} onClick={() => setAdminSubView('library')}>Library</button></li>
+                <li><button className={`block w-full text-center px-4 py-2 rounded-md font-semibold text-sm ${adminSubView === 'schedule' ? 'bg-primary text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`} onClick={() => setAdminSubView('schedule')}>Schedule</button></li>
+                <li><button className={`block w-full text-center px-4 py-2 rounded-md font-semibold text-sm ${adminSubView === 'rosters' ? 'bg-primary text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`} onClick={() => setAdminSubView('rosters')}>Rosters</button></li>
+                <li><button className={`block w-full text-center px-4 py-2 rounded-md font-semibold text-sm ${adminSubView === 'entries' ? 'bg-primary text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`} onClick={() => setAdminSubView('entries')}>Entries</button></li>
             </ul>
             <div className="bg-surface-light dark:bg-surface-dark rounded-lg shadow-md border border-border-light dark:border-border-dark">
                 <div className="p-4">
