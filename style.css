@@ -64,6 +64,37 @@ body {
     background-color: rgba(var(--primary-rgb), 0.1);
 }
 
+/* --- Notification Styles --- */
+.notification {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1055; /* Higher than nav */
+    display: none;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out, top 0.3s ease-in-out;
+}
+
+.notification.show {
+    display: block;
+    opacity: 1;
+    top: 60px;
+}
+
+/* --- Drag and Drop Styles --- */
+.schedule-item {
+    cursor: grab;
+}
+.sortable-ghost {
+    opacity: 0.4;
+    background: var(--primary-light);
+}
+.sortable-chosen {
+    cursor: grabbing;
+}
+
+
 /* --- Dark Theme Overrides --- */
 [data-bs-theme="dark"] body {
     --bs-body-color: var(--text-light);
@@ -93,22 +124,20 @@ body {
     border: 3px solid var(--primary-light);
 }
 
-
 /* --- Favorite Star Icon --- */
 .favorite-icon {
-    color: var(--primary-color);
+    color: var(--secondary-color);
 }
 .favorite-icon.inactive {
     color: #6c757d;
 }
 
 [data-bs-theme="dark"] .favorite-icon {
-    color: var(--primary-light);
+    color: var(--secondary-color);
 }
 [data-bs-theme="dark"] .favorite-icon.inactive {
-    color: #9ca3af;
+    color: #adb5bd;
 }
-
 
 /* Accordion Customization */
 .accordion-button:not(.collapsed) {
@@ -130,15 +159,4 @@ body {
     --bs-btn-color: #000;
     --bs-btn-hover-color: #000;
     --bs-btn-active-color: #000;
-}
-
-/* --- Settings Page Buttons --- */
-.btn-group .btn-primary {
-    background-color: var(--primary-color);
-    border-color: var(--primary-color);
-}
-[data-bs-theme="dark"] .btn-group .btn-primary {
-    background-color: var(--primary-light);
-    border-color: var(--primary-light);
-    color: var(--text-dark);
 }

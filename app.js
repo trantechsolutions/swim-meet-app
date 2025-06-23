@@ -22,16 +22,8 @@ const loadFavoritesFromLocalStorage = () => {
 // Reusable Icon Component
 const Icon = ({ name, type = 'fas', ...props }) => <i className={`${type} fa-${name}`} {...props}></i>;
 
-// A simple map to determine which team an admin belongs to.
-const ADMIN_TEAMS = {
-    'jonny5v@gmail.com': 'SUPERADMIN', 
-    'admin@kenneraquatics.com': 'AQN',
-    'coach@riverridgesharks.com': 'SCS',
-    'admin@barracudaswim.org': 'BARR',
-    'user@example.com': 'KLR' 
-};
-
 // --- Firebase Services ---
+// Configs and static data are now loaded from config.js
 const {
     initializeApp,
     getAuth,
@@ -111,7 +103,7 @@ function App() {
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             if (currentUser) {
                 setUser(currentUser);
-                if (currentUser.email) {
+                if (currentUser.email && typeof ADMIN_TEAMS !== 'undefined') {
                     setAdminRole(ADMIN_TEAMS[currentUser.email] || null);
                 } else {
                     setAdminRole(null);
@@ -534,14 +526,12 @@ function MeetManagement({ showNotification, allMeets }) {
 
         if (result.isConfirmed) {
             try {
-                // Delete all events associated with the meet
                 const eventsQuery = query(collection(db, "meet_events"), where("meetId", "==", meetId));
                 const eventDocs = await getDocs(eventsQuery);
                 const batch = writeBatch(db);
                 eventDocs.forEach(doc => {
                     batch.delete(doc.ref);
                 });
-                // Delete the meet itself
                 batch.delete(doc(db, "meets", meetId));
                 await batch.commit();
                 showNotification(`"${meetName}" and all its events were deleted.`, 'success');
@@ -584,6 +574,59 @@ function MeetManagement({ showNotification, allMeets }) {
         }
     };
 
+    const handleCopyClick = async (meetToCopy) => {
+         const { value: formValues } = await Swal.fire({
+            title: `Copy Meet: ${meetToCopy.name}`,
+            html:
+                `<input id="swal-input1" class="swal2-input" value="Copy of ${meetToCopy.name}">` +
+                `<input id="swal-input2" type="date" class="swal2-input" value="${formatDateForInput(new Date())}">`,
+            focusConfirm: false,
+            preConfirm: () => {
+                return [
+                    document.getElementById('swal-input1').value,
+                    document.getElementById('swal-input2').value
+                ]
+            }
+        });
+
+        if (formValues) {
+            const [newName, newDate] = formValues;
+            if(!newName || !newDate) {
+                 showNotification("New meet name and date are required.", "warning");
+                 return;
+            }
+            try {
+                // Create new meet
+                const newMeetRef = await addDoc(collection(db, "meets"), {
+                    name: newName,
+                    date: Timestamp.fromDate(new Date(newDate))
+                });
+
+                // Get original events
+                const originalEventsQuery = query(collection(db, "meet_events"), where("meetId", "==", meetToCopy.id));
+                const originalEventsSnap = await getDocs(originalEventsQuery);
+                const originalEvents = originalEventsSnap.docs.map(d => ({...d.data(), id: d.id}));
+
+                // Copy events to new meet
+                const batch = writeBatch(db);
+                originalEvents.forEach(event => {
+                    const newEventRef = doc(collection(db, "meet_events"));
+                    const newEventData = { ...event, meetId: newMeetRef.id, heats: [] }; // Reset heats
+                    delete newEventData.id;
+                    batch.set(newEventRef, newEventData);
+                });
+                await batch.commit();
+
+                showNotification(`Successfully copied meet and its schedule.`, 'success');
+
+            } catch (error) {
+                showNotification("Failed to copy meet.", "danger");
+                console.error("Error copying meet:", error);
+            }
+        }
+    };
+
+
     return (
          <>
             <h5 className="card-title">{editingMeet ? 'Edit Meet' : 'Create New Meet'}</h5>
@@ -608,6 +651,7 @@ function MeetManagement({ showNotification, allMeets }) {
                     <li key={meet.id} className="list-group-item d-flex justify-content-between align-items-center">
                         <span>{meet.name} ({meet.date.toLocaleDateString()})</span>
                         <div>
+                            <button className="btn btn-sm btn-outline-info me-2" onClick={() => handleCopyClick(meet)}><Icon name="copy"/></button>
                             <button className="btn btn-sm btn-outline-secondary me-2" onClick={() => handleEditClick(meet)}><Icon name="pencil-alt"/></button>
                             <button className="btn btn-sm btn-outline-danger" onClick={() => handleDeleteClick(meet.id, meet.name)}><Icon name="trash"/></button>
                         </div>
@@ -785,14 +829,14 @@ function ScheduleManagement({ allMeets, showNotification }) {
     const [selectedMeetId, setSelectedMeetId] = useState("");
     const [eventLibrary, setEventLibrary] = useState([]);
     const [selectedLibraryEventId, setSelectedLibraryEventId] = useState("");
-    const [eventNumber, setEventNumber] = useState("");
     const [scheduledEvents, setScheduledEvents] = useState([]);
-    const [editingEvent, setEditingEvent] = useState(null);
+    const scheduleListRef = useRef(null);
+    const sortableInstance = useRef(null);
 
     useEffect(() => {
         const libraryRef = collection(db, "event_library");
         const unsubscribe = onSnapshot(libraryRef, (snapshot) => {
-            const templates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name));
+            const templates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setEventLibrary(templates);
         });
         return () => unsubscribe();
@@ -807,22 +851,80 @@ function ScheduleManagement({ allMeets, showNotification }) {
         const unsubscribe = onSnapshot(eventsQuery, (snapshot) => {
             const events = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()})).sort((a,b)=> a.eventNumber - b.eventNumber);
             setScheduledEvents(events);
+        }, (error) => {
+            console.error("Error fetching scheduled events:", error);
+            showNotification("Could not load schedule.", "danger");
         });
         return () => unsubscribe();
     }, [selectedMeetId]);
-
-    const resetForm = () => {
-        setSelectedLibraryEventId("");
-        setEventNumber("");
-        setEditingEvent(null);
+    
+    const reorderEvents = async (newOrder) => {
+        const batch = writeBatch(db);
+        newOrder.forEach((event, index) => {
+            const eventRef = doc(db, "meet_events", event.id);
+            batch.update(eventRef, { eventNumber: index + 1 });
+        });
+        try {
+            await batch.commit();
+            showNotification("Event order updated successfully.", "success");
+        } catch (error) {
+            showNotification("Failed to update event order.", "danger");
+            console.error(error);
+        }
     };
+    
+    useEffect(() => {
+        if (scheduleListRef.current) {
+            if (sortableInstance.current) {
+                sortableInstance.current.destroy();
+            }
+            sortableInstance.current = new Sortable(scheduleListRef.current, {
+                animation: 150,
+                onEnd: (evt) => {
+                    const { oldIndex, newIndex } = evt;
+                    const reorderedEvents = [...scheduledEvents];
+                    const [movedItem] = reorderedEvents.splice(oldIndex, 1);
+                    reorderedEvents.splice(newIndex, 0, movedItem);
+                    setScheduledEvents(reorderedEvents); 
+                    reorderEvents(reorderedEvents);
+                },
+            });
+        }
+    }, [scheduledEvents]);
 
-    const handleEditClick = (event) => {
-        setEditingEvent(event);
-        setSelectedLibraryEventId(event.libraryEventId);
-        setEventNumber(event.eventNumber);
+    const handleAddEventToMeet = async (e) => {
+        e.preventDefault();
+        
+        if (!selectedMeetId || !selectedLibraryEventId) {
+            showNotification("Please select a meet and a library event.", "warning");
+            return;
+        }
+
+        const libraryEvent = eventLibrary.find(t => t.id === selectedLibraryEventId);
+        if (!libraryEvent) {
+            showNotification("Selected library event not found.", "danger");
+            return;
+        }
+
+        const newEventNumber = scheduledEvents.length + 1;
+
+        const eventData = {
+            meetId: selectedMeetId,
+            libraryEventId: selectedLibraryEventId,
+            name: libraryEvent.name,
+            eventNumber: newEventNumber,
+            heats: []
+        };
+        try {
+            await addDoc(collection(db, "meet_events"), eventData);
+            showNotification(`Event "${libraryEvent.name}" added as Event #${newEventNumber}.`, "success");
+            setSelectedLibraryEventId(""); // Reset dropdown
+        } catch (error) {
+            showNotification("Error adding event to meet.", "danger");
+            console.error(error);
+        }
     };
-
+    
     const handleRemoveClick = async (eventId, eventName) => {
         const result = await Swal.fire({
             title: 'Are you sure?',
@@ -843,56 +945,10 @@ function ScheduleManagement({ allMeets, showNotification }) {
         }
     };
     
-    const handleFormSubmit = async (e) => {
-        e.preventDefault();
-        if (editingEvent) {
-            if (!eventNumber) {
-                showNotification("Event number cannot be empty.", "warning");
-                return;
-            }
-            const eventRef = doc(db, "meet_events", editingEvent.id);
-            try {
-                await updateDoc(eventRef, {
-                    eventNumber: parseInt(eventNumber, 10)
-                });
-                showNotification("Event updated successfully!", "success");
-                resetForm();
-            } catch (error) {
-                showNotification("Failed to update event.", "danger");
-                console.error("Error updating event:", error);
-            }
-        } else {
-            if (!selectedMeetId || !selectedLibraryEventId || !eventNumber) {
-                showNotification("Please fill out all fields.", "warning");
-                return;
-            }
-            const libraryEvent = eventLibrary.find(t => t.id === selectedLibraryEventId);
-            if (!libraryEvent) {
-                showNotification("Selected library event not found.", "danger");
-                return;
-            }
-            const eventData = {
-                meetId: selectedMeetId,
-                libraryEventId: selectedLibraryEventId,
-                name: libraryEvent.name,
-                eventNumber: parseInt(eventNumber, 10),
-                heats: []
-            };
-            try {
-                await addDoc(collection(db, "meet_events"), eventData);
-                showNotification(`Event "${libraryEvent.name}" added to the meet.`, "success");
-                resetForm();
-            } catch (error) {
-                showNotification("Error adding event to meet.", "danger");
-                console.error(error);
-            }
-        }
-    };
-
     const handleBulkSchedule = async () => {
          const result = await Swal.fire({
             title: 'Bulk Add Schedule?',
-            text: `This will add ALL events from the library to this meet, sorted by stroke, age, gender, and distance. It will not create duplicates.`,
+            text: `This will add ALL events from the library to this meet, sorted by age, gender, and stroke. It will not create duplicates.`,
             icon: 'question',
             showCancelButton: true,
             confirmButtonText: 'Yes, create schedule!'
@@ -900,7 +956,7 @@ function ScheduleManagement({ allMeets, showNotification }) {
         if(!result.isConfirmed || !selectedMeetId) return;
 
         const scheduledEventNames = new Set(scheduledEvents.map(e => e.name));
-        const eventsToAdd = eventLibrary.filter(libEvent => !scheduledEventNames.has(libEvent.name));
+        let eventsToAdd = eventLibrary.filter(libEvent => !scheduledEventNames.has(libEvent.name));
         
         if (eventsToAdd.length === 0) {
             showNotification("All library events are already scheduled for this meet.", "info");
@@ -931,9 +987,9 @@ function ScheduleManagement({ allMeets, showNotification }) {
             const parsedA = parseEventNameForSort(a.name);
             const parsedB = parseEventNameForSort(b.name);
             
-            if (parsedA.stroke !== parsedB.stroke) return parsedA.stroke - parsedB.stroke;
             if (parsedA.ageMin !== parsedB.ageMin) return parsedA.ageMin - parsedB.ageMin;
             if (parsedA.gender !== parsedB.gender) return parsedA.gender === 'Girls' ? -1 : 1;
+            if (parsedA.stroke !== parsedB.stroke) return parsedA.stroke - parsedB.stroke;
             return parsedA.distance - parsedB.distance;
         });
 
@@ -972,22 +1028,17 @@ function ScheduleManagement({ allMeets, showNotification }) {
             </div>
             {selectedMeetId && (
                 <>
-                <form onSubmit={handleFormSubmit}>
-                    <h6 className="mt-4">{editingEvent ? "Editing Event" : "Add New Event"}</h6>
+                <form onSubmit={handleAddEventToMeet}>
+                    <h6 className="mt-4">Add Single Event</h6>
                     <div className="mb-3">
                         <label htmlFor="libraryEventSelect" className="form-label">Library Event</label>
-                        <select id="libraryEventSelect" className="form-select" value={selectedLibraryEventId} onChange={e => setSelectedLibraryEventId(e.target.value)} disabled={!!editingEvent}>
+                        <select id="libraryEventSelect" className="form-select" value={selectedLibraryEventId} onChange={e => setSelectedLibraryEventId(e.target.value)}>
                             <option value="" disabled>-- Choose an event --</option>
                             {eventLibrary.map(event => <option key={event.id} value={event.id}>{event.name}</option>)}
                         </select>
                     </div>
-                    <div className="mb-3">
-                        <label htmlFor="eventNumberSchedule" className="form-label">Event Number</label>
-                        <input type="number" id="eventNumberSchedule" className="form-control" value={eventNumber} onChange={e => setEventNumber(e.target.value)} />
-                    </div>
                     <div className="d-grid gap-2">
-                        <button type="submit" className="btn btn-primary">{editingEvent ? 'Update Event' : 'Add Event to Schedule'}</button>
-                        {editingEvent && <button type="button" className="btn btn-secondary" onClick={resetForm}>Cancel Edit</button>}
+                        <button type="submit" className="btn btn-primary">Add Event to Schedule</button>
                     </div>
                 </form>
                 <div className="d-grid gap-2 mt-3">
@@ -996,14 +1047,11 @@ function ScheduleManagement({ allMeets, showNotification }) {
                  <>
                     <hr/>
                     <h5 className="mt-3">Current Schedule</h5>
-                    <ul className="list-group">
-                        {scheduledEvents.map(event => (
-                            <li key={event.id} className="list-group-item d-flex justify-content-between align-items-center">
-                                <span><strong>E{event.eventNumber}:</strong> {event.name}</span>
-                                <div>
-                                    <button className="btn btn-sm btn-outline-secondary me-2" onClick={() => handleEditClick(event)}>Edit</button>
-                                    <button className="btn btn-sm btn-outline-danger" onClick={() => handleRemoveClick(event.id, event.name)}>Remove</button>
-                                </div>
+                    <ul className="list-group" ref={scheduleListRef}>
+                        {scheduledEvents.map((event, index) => (
+                            <li key={event.id} className="list-group-item d-flex justify-content-between align-items-center schedule-item">
+                                <span><Icon name="bars" className="me-2 text-muted"/> <strong>E{event.eventNumber}:</strong> {event.name}</span>
+                                <button className="btn btn-sm btn-outline-danger" onClick={() => handleRemoveClick(event.id, event.name)}><Icon name="trash"/></button>
                             </li>
                         ))}
                     </ul>
@@ -1071,12 +1119,10 @@ function RosterManagement({ adminRole, showNotification }) {
         });
         if(!result.isConfirmed) return;
         
-        // Remove from roster
         const newRoster = roster.filter(s => s.id !== swimmerToRemove.id);
         const rosterDocRef = doc(db, 'rosters', managingTeam);
         await setDoc(rosterDocRef, { swimmers: newRoster });
         
-        // Remove from all event entries
         const allEventsQuery = query(collection(db, "meet_events"));
         const allEventsSnap = await getDocs(allEventsQuery);
         const batch = writeBatch(db);
