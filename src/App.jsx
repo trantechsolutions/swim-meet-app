@@ -210,6 +210,31 @@ function App() {
         });
     };
 
+    useEffect(() => {
+        // Do nothing until the global swimmer list has been loaded.
+        if (Object.keys(allSwimmers).length === 0) {
+            return;
+        }
+
+        let favoritesWereCleaned = false;
+        const cleanedFavorites = new Set(favorites);
+
+        for (const swimmerId of cleanedFavorites) {
+            // If a favorited swimmer's ID is NOT found in the global list...
+            if (!allSwimmers[swimmerId]) {
+                cleanedFavorites.delete(swimmerId); // ...remove it from the set.
+                favoritesWereCleaned = true;
+            }
+        }
+
+        // If any changes were made, update the state to trigger a re-render and save to localStorage.
+        if (favoritesWereCleaned) {
+            console.log("Cleaned stale swimmer IDs from favorites.");
+            setFavorites(cleanedFavorites);
+        }
+
+    }, [allSwimmers, favorites]); // This runs whenever the global swimmer list or the favorites list changes.
+
     const favoriteResults = useMemo(() => {
         const favoritedIds = Array.from(favorites);
 
@@ -253,32 +278,29 @@ function App() {
     }, [favorites, allSwimmers, meetData]);
 
     const swimmerSearchResults = useMemo(() => {
-        if (!swimmerSearch.trim() || !meetData || !meetData.events) return [];
+        // Return empty if there's no search term or if the global swimmer list isn't ready
+        if (!swimmerSearch.trim() || Object.keys(allSwimmers).length === 0) {
+            return [];
+        }
+
         const query = swimmerSearch.toLowerCase();
-        const results = {};
-        const abbreviate = name => (name || '').replace("Freestyle", "Free").replace("Backstroke", "Back").replace("Breaststroke", "Breast").replace("Butterfly", "Fly");
-        meetData.events.forEach(event => {
-             if(event.heats) {
-                event.heats.forEach(heat => {
-                    heat.lanes.forEach(lane => {
-                        const fullName = `${lane.firstName} ${lane.lastName}`;
-                        if (fullName.toLowerCase().includes(query)) {
-                            if (!results[lane.id]) {
-                                results[lane.id] = {
-                                    id: lane.id,
-                                    name: fullName,
-                                    team: lane.team,
-                                    events: []
-                                };
-                            }
-                            results[lane.id].events.push(`E${event.eventNumber} H${heat.heatNumber} L${lane.lane}: ${abbreviate(event.name)}`);
-                        }
-                    });
-                });
-            }
+        
+        // Filter through the global list of all swimmers
+        const results = Object.values(allSwimmers).filter(swimmer => {
+            const fullName = `${swimmer.firstName} ${swimmer.lastName}`;
+            return fullName.toLowerCase().includes(query);
         });
-        return Object.values(results).sort((a,b) => a.name.localeCompare(b.name));
-    }, [swimmerSearch, meetData]);
+
+        // Map to a consistent result structure and sort
+        return results
+            .map(swimmer => ({
+                id: swimmer.id,
+                name: `${swimmer.firstName} ${swimmer.lastName}`,
+                team: swimmer.team,
+            }))
+            .sort((a,b) => a.name.localeCompare(b.name));
+
+    }, [swimmerSearch, allSwimmers]); // The hook now depends on allSwimmers, not meetData
 
     const eventSearchResults = useMemo(() => {
         if (!eventSearch.trim() || !meetData || !meetData.events) return [];

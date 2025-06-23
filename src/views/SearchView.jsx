@@ -38,12 +38,10 @@ export function SearchSwimmerView({ search, setSearch, results, favorites, toggl
             <div className="bg-surface-light dark:bg-surface-dark rounded-lg shadow-md overflow-hidden border border-border-light dark:border-border-dark">
                 <ul className="divide-y divide-border-light dark:divide-border-dark">
                     {results.map(swimmer => (
-                        <li key={swimmer.id} className="p-4 flex justify-between items-start">
-                            <div className="mr-auto">
-                                <div className="font-bold">{swimmer.name} ({swimmer.team})</div>
-                                <div className="text-sm text-gray-500 dark:text-gray-400">
-                                    {swimmer.events.map((eventStr, index) => <div key={index}>{eventStr}</div>)}
-                                </div>
+                        <li key={swimmer.id} className="p-4 flex justify-between items-center">
+                            {/* The div now just displays the name and team */}
+                            <div className="mr-auto font-bold">
+                                {swimmer.name} ({swimmer.team})
                             </div>
                             <button className="p-2 -m-2" onClick={() => toggleFavorite(swimmer.id)} aria-label={`Toggle favorite for ${swimmer.name}`}>
                                 <div className={`${favorites.has(swimmer.id) ? 'text-secondary' : 'text-gray-400 dark:text-gray-500'}`}>
