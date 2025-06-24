@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { firebaseConfig, ADMIN_TEAMS } from './config.js';
 import { Toaster, toast } from 'react-hot-toast';
-import { useReactToPrint } from 'react-to-print';
 
 // --- Component and View Imports ---
 import Icon from './components/Icon.jsx';
-import Notification from './components/Notification.jsx';
 import ReloadPrompt from './components/ReloadPrompt.jsx';
 import ScheduleView from './views/ScheduleView.jsx';
 import { SearchEventView, SearchSwimmerView } from './views/SearchView.jsx';
 import AdminView from './views/AdminView.jsx';
 import SettingsView from './views/SettingsView.jsx';
-import PrintableHeatSheet from './components/PrintableHeatSheet.jsx';
 
 // --- Firebase Imports ---
 import { auth, db } from './firebase.js'; // Use the new central file
@@ -57,12 +53,7 @@ function App() {
     const [allMeets, setAllMeets] = useState([]);
     const [selectedMeetId, setSelectedMeetId] = useState(null);
     const [allSwimmers, setAllSwimmers] = useState({});
-
-    const heatSheetRef = useRef();
-    const handlePrint = useReactToPrint({
-        content: () => heatSheetRef.current,
-        documentTitle: `${meetData?.name || 'Swim Meet'} - Heat Sheet`,
-    });
+    const [allMeetsWithEvents, setAllMeetsWithEvents] = useState([]);
 
     useEffect(() => {
         const applyTheme = (t) => {
@@ -115,7 +106,7 @@ function App() {
         });
         return unsubscribe
     }, []);
-    
+
     useEffect(() => {
         if (!db) return;
         // This listener fetches all swimmers from all team rosters
@@ -133,19 +124,16 @@ function App() {
         });
         return () => unsubscribe();
     }, []);
-
+    
+    // 1. Fetch the basic list of all meets
     useEffect(() => {
         if (!db) return;
         const meetsCollectionRef = collection(db, "meets");
         const unsubscribe = onSnapshot(meetsCollectionRef, (querySnapshot) => {
             const meetsList = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data(),
-                date: doc.data().date.toDate()
-            })).sort((a,b) => a.date - b.date);
-
-            setAllMeets(meetsList);
-
+                id: doc.id, ...doc.data(), date: doc.data().date.toDate()
+            }));
+            setAllMeets(meetsList.sort((a, b) => a.date - b.date));
             if (!selectedMeetId && meetsList.length > 0) {
                 const now = new Date();
                 const upcomingMeet = meetsList.find(meet => meet.date >= now);
@@ -154,35 +142,44 @@ function App() {
             setLoading(false);
         }, (err) => {
             console.error("Error fetching meets:", err);
-            setError("Could not load meets from the database.");
             setLoading(false);
         });
         return () => unsubscribe();
     }, []);
 
+    // 2. Fetch ALL events and combine them with the meets list
     useEffect(() => {
-        if (!db || !selectedMeetId) {
-            setMeetData(null);
+        if (!db || allMeets.length === 0) {
+            setAllMeetsWithEvents([]);
             return;
-        };
-        const meetInfo = allMeets.find(m => m.id === selectedMeetId);
-        if (!meetInfo) return;
-        const eventsQuery = query(collection(db, "meet_events"), where("meetId", "==", selectedMeetId));
-        const unsubscribe = onSnapshot(eventsQuery, (querySnapshot) => {
-             const eventsList = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })).sort((a,b) => a.eventNumber - b.eventNumber);
-            setMeetData({
-                ...meetInfo,
-                events: eventsList
-            });
-        }, (err) => {
-            console.error(`Error fetching events for meet ${selectedMeetId}:`, err);
-            setError(`Could not load events for the selected meet.`);
+        }
+        const eventsCollectionRef = collection(db, "meet_events");
+        const unsubscribe = onSnapshot(eventsCollectionRef, (querySnapshot) => {
+            const allEvents = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const eventsByMeetId = allEvents.reduce((acc, event) => {
+                const meetId = event.meetId;
+                if (!acc[meetId]) acc[meetId] = [];
+                acc[meetId].push(event);
+                return acc;
+            }, {});
+            const combinedMeets = allMeets.map(meet => ({
+                ...meet,
+                events: (eventsByMeetId[meet.id] || []).sort((a, b) => a.eventNumber - b.eventNumber)
+            }));
+            setAllMeetsWithEvents(combinedMeets);
         });
         return () => unsubscribe();
-    }, [db, selectedMeetId, allMeets]);
+    }, [allMeets]); // Reruns when the list of meets changes
+
+    // 3. Set the currently viewed meet's data from the combined list
+    useEffect(() => {
+        if (selectedMeetId) {
+            const currentMeetData = allMeetsWithEvents.find(m => m.id === selectedMeetId);
+            setMeetData(currentMeetData || null);
+        } else {
+            setMeetData(null);
+        }
+    }, [selectedMeetId, allMeetsWithEvents]);
 
     const handleSignIn = () => {
         if (!auth || !provider) return;
@@ -269,9 +266,11 @@ function App() {
                     if (event.heats) {
                         event.heats.forEach(heat => {
                             heat.lanes.forEach(lane => {
-                                if (lane.id === swimmerId) {
-                                    eventsInCurrentMeet.push(`E${event.eventNumber} H${heat.heatNumber} L${lane.lane}: ${abbreviate(event.name)}`);
-                                }
+                                lane.swimmers.forEach(swimmer => {
+                                    if (swimmer.id === swimmerId) {
+                                        eventsInCurrentMeet.push(`E${event.eventNumber} H${heat.heatNumber} L${lane.lane}: ${abbreviate(event.name)}`);
+                                    }
+                                });
                             });
                         });
                     }
@@ -342,7 +341,7 @@ function App() {
             case 'searchSwimmers':
                 return meetData ? <SearchSwimmerView search={swimmerSearch} setSearch={setSwimmerSearch} results={swimmerSearchResults} favorites={favorites} toggleFavorite={toggleFavorite} /> : <p className="text-center">Select a meet to search swimmers.</p>;
             case 'admin':
-                return <AdminView adminRole={adminRole} isSuperAdmin={isSuperAdmin} allMeets={allMeets} toast={toast}/>;
+                return <AdminView adminRole={adminRole} isSuperAdmin={isSuperAdmin} allMeets={allMeetsWithEvents} toast={toast} />;
             case 'settings':
                 return <SettingsView theme={theme} setTheme={setTheme} user={user} isAuthorized={!!adminRole} handleSignIn={handleSignIn} handleSignOut={handleSignOut} />;
             default:
@@ -361,20 +360,12 @@ function App() {
             />
             <ReloadPrompt />
             
-            <PrintableHeatSheet ref={heatSheetRef} meetData={meetData} />
-
             <div className="container mx-auto px-4 py-4">
                 <header className="text-center mb-4">
                     {activeTab !== 'admin' && meetData ? (
                          <h1 className="font-bold text-3xl text-primary">{meetData.name}</h1>
                     ): (
                          <h1 className="font-bold text-3xl text-primary">Swim Meet Live</h1>
-                    )}
-                    {/* The new Print button - now only appears if there are events to print */}
-                    {meetData && meetData.events && meetData.events.length > 0 && (
-                        <button onClick={handlePrint} className="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700" title="Print Heat Sheet">
-                            <Icon name="print" />
-                        </button>
                     )}
                     {allMeets.length > 0 && activeTab !== 'admin' && (
                         <div className="mt-2 max-w-md mx-auto">

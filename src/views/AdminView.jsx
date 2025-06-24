@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useMemo } from 'react';
 
 import useConfirm from '../hooks/useConfirm.jsx';
 
@@ -9,6 +9,8 @@ import EventLibraryManagement from '../components/admin/EventLibraryManagement.j
 import ScheduleManagement from '../components/admin/ScheduleManagement.jsx';
 import RosterManagement from '../components/admin/RosterManagement.jsx';
 import EntryManagement from '../components/admin/EntryManagement.jsx';
+import PrintManagement from '../components/admin/PrintManagement.jsx';
+import ImportManagement from '../components/admin/ImportManagement.jsx';
 
 
 function AdminView({ toast, isSuperAdmin, adminRole, allMeets }) {
@@ -18,12 +20,17 @@ function AdminView({ toast, isSuperAdmin, adminRole, allMeets }) {
     const [activeMeetId, setActiveMeetId] = useState(allMeets[0]?.id || "");
     const selectedMeetForEntries = useMemo(() => allMeets.find(meet => meet.id === activeMeetId), [allMeets, activeMeetId]);
 
+    const enhancedAllMeets = allMeets.map(meet => ({
+        ...meet,
+        events: meet.events || [], // Ensure events array exists
+    }));
+
     if (!adminRole) {
         return <div className="p-4 text-yellow-800 bg-yellow-100 border border-yellow-200 rounded-md">You are not authorized to view this page.</div>;
     }
 
     const renderSubView = () => {
-        const props = { toast, confirm, adminRole, isSuperAdmin, allMeets, activeMeetId, setActiveMeetId, selectedMeet: selectedMeetForEntries };
+        const props = { toast, confirm, adminRole, isSuperAdmin, allMeets: enhancedAllMeets, activeMeetId, setActiveMeetId, selectedMeet: selectedMeetForEntries, };
         switch (adminSubView) {
             case 'meets':
                 return <MeetManagement {...props} />;
@@ -37,6 +44,10 @@ function AdminView({ toast, isSuperAdmin, adminRole, allMeets }) {
                 return <EntryManagement {...props} />;
             case 'teams':
                 return <TeamManagement {...props} />;
+            case 'print':
+                return <PrintManagement {...props} />;
+            case 'import':
+                return <ImportManagement {...props} />;
             default:
                 return null;
         }
@@ -52,6 +63,8 @@ function AdminView({ toast, isSuperAdmin, adminRole, allMeets }) {
         { key: 'schedule', label: 'Schedule' },
         { key: 'rosters', label: 'Rosters' },
         { key: 'entries', label: 'Entries' },
+        { key: 'print', label: 'Print' },
+        { key: 'import', label: 'Import' },
     ];
 
     return (

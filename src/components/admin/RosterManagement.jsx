@@ -10,7 +10,7 @@ function RosterManagement({ adminRole, isSuperAdmin, toast, confirm }) {
     const [teams, setTeams] = useState([]);
     const [managingTeam, setManagingTeam] = useState(isSuperAdmin ? "" : adminRole);
     const [roster, setRoster] = useState([]);
-    const [swimmerForm, setSwimmerForm] = useState({ id: null, firstName: "", lastName: "", age: "", gender: "Boy" });
+    const [swimmerForm, setSwimmerForm] = useState({ id: null, firstName: "", lastName: "", age: "", gender: "" });
     const fileInputRef = useRef(null);
 
     useEffect(() => {
@@ -31,16 +31,25 @@ function RosterManagement({ adminRole, isSuperAdmin, toast, confirm }) {
         }
     }, [managingTeam]);
     
-    const resetForm = () => setSwimmerForm({ id: null, firstName: "", lastName: "", age: "", gender: "Boy" });
+    const resetForm = () => setSwimmerForm({ id: null, firstName: "", lastName: "", age: "", gender: "" });
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
         const { id, firstName, lastName, age, gender } = swimmerForm;
-        if (!firstName.trim() || !lastName.trim() || !age || !managingTeam) {
-            toast.error("Please select a team and fill out all swimmer fields."); return;
+        if (!firstName.trim() || !lastName.trim() || !managingTeam) {
+            toast.error("Please select a team and fill out the swimmer's first and last name."); return;
         }
-        let newRoster = id ? roster.map(s => s.id === id ? { ...s, firstName, lastName, age: parseInt(age), gender } : s)
-                          : [...roster, { id: crypto.randomUUID(), firstName, lastName, age: parseInt(age), gender }];
+        
+        const swimmerData = {
+            id: id || crypto.randomUUID(),
+            firstName,
+            lastName,
+            age: parseInt(age, 10) || 0,
+            gender: gender || ''
+        };
+        
+        let newRoster = id ? roster.map(s => s.id === id ? swimmerData : s)
+                          : [...roster, swimmerData];
         
         await setDoc(doc(db, 'rosters', managingTeam), { swimmers: newRoster }, { merge: true });
         toast.success(`Swimmer ${id ? 'updated' : 'added'} successfully!`);
@@ -50,7 +59,7 @@ function RosterManagement({ adminRole, isSuperAdmin, toast, confirm }) {
     const handleEditClick = (swimmer) => setSwimmerForm(swimmer);
 
     const handleRemoveClick = async (swimmerToRemove) => {
-        if (await confirm('Are you sure?', `This removes ${swimmerToRemove.firstName} from the team roster. It does NOT remove them from any events they are already entered in.`)) {
+        if (await confirm('Are you sure?', `This removes ${swimmerToRemove.firstName} ${swimmerToRemove.lastName} from the team roster. It does NOT remove them from any events they are already entered in.`)) {
             try {
                 const newRoster = roster.filter(s => s.id !== swimmerToRemove.id);
                 await setDoc(doc(db, 'rosters', managingTeam), { swimmers: newRoster });
@@ -84,6 +93,17 @@ function RosterManagement({ adminRole, isSuperAdmin, toast, confirm }) {
         reader.readAsText(file);
     };
 
+    const renderSwimmerDetails = (swimmer) => {
+        const details = [];
+        if (swimmer.age > 0) {
+            details.push(`Age: ${swimmer.age}`);
+        }
+        if (swimmer.gender) {
+            details.push(swimmer.gender);
+        }
+        return details.length > 0 ? `(${details.join(', ')})` : '';
+    };
+
     return (
         <>
             <h5 className="font-semibold text-lg">Manage Team Rosters</h5>
@@ -105,7 +125,9 @@ function RosterManagement({ adminRole, isSuperAdmin, toast, confirm }) {
                         <div className="lg:flex-grow"><AdminInput label="Last Name" id="swimmerLastName" type="text" value={swimmerForm.lastName} onChange={e => setSwimmerForm({...swimmerForm, lastName: e.target.value})} /></div>
                         <div className="lg:w-20"><AdminInput label="Age" id="swimmerAge" type="number" value={swimmerForm.age} onChange={e => setSwimmerForm({...swimmerForm, age: e.target.value})} /></div>
                         <div className="lg:w-28"><AdminSelect label="Gender" id="swimmerGender" value={swimmerForm.gender} onChange={e => setSwimmerForm({...swimmerForm, gender: e.target.value})}>
-                            <option value="Boy">Boy</option><option value="Girl">Girl</option>
+                            <option value="">--</option>
+                            <option value="Boy">Boy</option>
+                            <option value="Girl">Girl</option>
                          </AdminSelect></div>
                         <div className="flex space-x-2 pt-5 lg:pt-0">
                            <AdminButton type="submit" className="flex-1">{swimmerForm.id ? 'Update' : 'Add'}</AdminButton>
@@ -115,14 +137,16 @@ function RosterManagement({ adminRole, isSuperAdmin, toast, confirm }) {
                      <div className="mt-6">
                          <label htmlFor="csvUpload" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Bulk Upload Roster (CSV)</label>
                          <input type="file" className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20" id="csvUpload" accept=".csv" ref={fileInputRef} onChange={handleFileUpload} />
-                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Format: firstName,lastName,age,gender (with header row)</p>
+                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Format: FirstName,LastName,[Age],[Gender] (Age and Gender are optional)</p>
                      </div>
                      <hr className="my-6 border-border-light dark:border-border-dark"/>
                      <h6 className="font-semibold text-lg mt-3">Team Roster for {managingTeam}</h6>
                      <ul className="mt-2 space-y-2">
                         {roster.length > 0 ? roster.sort((a,b) => a.lastName.localeCompare(b.lastName)).map(swimmer => (
                             <li key={swimmer.id} className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-md flex justify-between items-center">
-                                <span className="font-medium">{swimmer.lastName}, {swimmer.firstName} (Age: {swimmer.age}, {swimmer.gender})</span>
+                                <span className="font-medium">
+                                    {swimmer.lastName}, {swimmer.firstName} <span className="text-gray-500 ml-2">{renderSwimmerDetails(swimmer)}</span>
+                                </span>
                                 <div className="flex items-center space-x-2">
                                     <button className="text-gray-500 hover:text-gray-700" onClick={() => handleEditClick(swimmer)}><Icon name="pencil-alt"/></button>
                                     <button className="text-red-500 hover:text-red-700" onClick={() => handleRemoveClick(swimmer)}><Icon name="trash"/></button>

@@ -22,15 +22,21 @@ function EventCard({ event, favorites, currentEvent, toggleFavorite }) {
                         <h6 className="mb-2 font-semibold text-gray-600 dark:text-gray-400">Heat {heat.heatNumber}</h6>
                         <ul className="divide-y divide-border-light dark:divide-border-dark -m-3">
                             {heat.lanes.map(lane => (
-                                <li key={lane.id} className="p-3 flex justify-between items-center">
-                                    <div>
-                                      <strong className="font-semibold">Lane {lane.lane}:</strong> {`${lane.firstName} ${lane.lastName}`} <span className="text-gray-500">({lane.team})</span>
+                                <li key={lane.lane} className="p-3 flex justify-between items-start">
+                                    <div className="flex-grow">
+                                        <strong className="font-semibold">Lane {lane.lane}:</strong>
+                                        {/* Map over the swimmers in the lane */}
+                                        {lane.swimmers.map(swimmer => (
+                                            <div key={swimmer.id} className="ml-4 flex justify-between items-center">
+                                                <span>{`${swimmer.firstName} ${swimmer.lastName}`} <span className="text-gray-500">({swimmer.team})</span></span>
+                                                <button className="p-2 -m-2" onClick={() => toggleFavorite(swimmer.id)}>
+                                                    <div className={`${favorites.has(swimmer.id) ? 'text-secondary' : 'text-gray-400 dark:text-gray-500'}`}>
+                                                        <Icon name="star" type={favorites.has(swimmer.id) ? 'fas' : 'far'} />
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        ))}
                                     </div>
-                                    <button className="p-2 -m-2" onClick={() => toggleFavorite(lane.id)} aria-label={`Toggle favorite for ${lane.firstName} ${lane.lastName}`}>
-                                        <div className={`${favorites.has(lane.id) ? 'text-secondary' : 'text-gray-400 dark:text-gray-500'}`}>
-                                            <Icon name="star" type={favorites.has(lane.id) ? 'fas' : 'far'} />
-                                        </div>
-                                    </button>
                                 </li>
                             ))}
                         </ul>
