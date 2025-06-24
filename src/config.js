@@ -1,6 +1,6 @@
 // --- App Version ---
 // Change this version number to force a refresh of cached CSS and JS files.
-export const APP_VERSION = "2.0.0";
+export const APP_VERSION = "2.1.0";
 
 // --- Firebase Config ---
 // This object contains your Firebase project's credentials.

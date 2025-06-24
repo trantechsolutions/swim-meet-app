@@ -16,7 +16,7 @@ import PrintableHeatSheet from './components/PrintableHeatSheet.jsx';
 // --- Firebase Imports ---
 import { auth, db } from './firebase.js'; // Use the new central file
 import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously } from "firebase/auth";
-import { collection, query, where, doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
+import { collection, query, where, doc, onSnapshot, setDoc, getDoc, updateDoc } from "firebase/firestore";
 
 const provider = new GoogleAuthProvider();
 
@@ -44,12 +44,12 @@ function App() {
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'system');
     const [user, setUser] = useState(null);
     const [adminRole, setAdminRole] = useState(null);
+    const [isSuperAdmin, setIsSuperAdmin] = useState(false);
     const [favorites, setFavorites] = useState(loadFavoritesFromLocalStorage);
     const [activeTab, setActiveTab] = useState('schedule');
     const [currentEvent, setCurrentEvent] = useState({ eventNumber: 1, heatNumber: 1, isTracking: false });
     const [eventSearch, setEventSearch] = useState('');
     const [swimmerSearch, setSwimmerSearch] = useState('');
-    const [notification, setNotification] = useState({ show: false, message: '', type: '' });
     const [favoritesOpen, setFavoritesOpen] = useState(false);
     const [meetData, setMeetData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -87,13 +87,25 @@ function App() {
             setError("Authentication service is not available.");
             return;
         };
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             if (currentUser) {
                 setUser(currentUser);
-                if (currentUser.email && typeof ADMIN_TEAMS !== 'undefined') {
-                    setAdminRole(ADMIN_TEAMS[currentUser.email] || null);
+                // --- NEW: Dynamic admin role fetching ---
+                if (currentUser.email) {
+                    if (currentUser.email === 'jonny5v@gmail.com') { // Or another method to define super admins
+                        setIsSuperAdmin(true);
+                        setAdminRole('SUPERADMIN'); // Assign a role for consistency
+                    } else {
+                        // Check for team admin status
+                        setIsSuperAdmin(false);
+                        const adminDocRef = doc(db, 'team_admins', currentUser.email);
+                        const adminDocSnap = await getDoc(adminDocRef);
+                        setAdminRole(adminDocSnap.exists() ? adminDocSnap.data().team : null);
+                    }
                 } else {
                     setAdminRole(null);
+                    setIsSuperAdmin(false);
                 }
             } else {
                 signInAnonymously(auth).catch(err => {
@@ -101,9 +113,9 @@ function App() {
                 });
             }
         });
-        return () => unsubscribe();
+        return unsubscribe
     }, []);
-
+    
     useEffect(() => {
         if (!db) return;
         // This listener fetches all swimmers from all team rosters
@@ -330,7 +342,7 @@ function App() {
             case 'searchSwimmers':
                 return meetData ? <SearchSwimmerView search={swimmerSearch} setSearch={setSwimmerSearch} results={swimmerSearchResults} favorites={favorites} toggleFavorite={toggleFavorite} /> : <p className="text-center">Select a meet to search swimmers.</p>;
             case 'admin':
-                return <AdminView adminRole={adminRole} allMeets={allMeets} toast={toast}/>;
+                return <AdminView adminRole={adminRole} isSuperAdmin={isSuperAdmin} allMeets={allMeets} toast={toast}/>;
             case 'settings':
                 return <SettingsView theme={theme} setTheme={setTheme} user={user} isAuthorized={!!adminRole} handleSignIn={handleSignIn} handleSignOut={handleSignOut} />;
             default:

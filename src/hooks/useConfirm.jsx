@@ -1,91 +1,55 @@
 import React, { useState, useCallback } from 'react';
 import Modal from '../components/Modal.jsx';
 import AdminButton from '../components/admin/AdminButton.jsx';
-import AdminInput from '../components/admin/AdminInput.jsx';
 
 const useConfirm = () => {
-  const [promise, setPromise] = useState(null);
-  const [content, setContent] = useState(null);
+  // Store all options, including the content to render and the promise resolver
+  const [options, setOptions] = useState(null);
 
-  const confirm = useCallback((contentPayload) => {
-    setContent(contentPayload);
-    return new Promise((resolve, reject) => {
-      setPromise({ resolve });
+  // The confirm function now takes a single options object for clarity and power.
+  // Example usage: confirm({ title: 'My Title', content: <p>My JSX content</p> })
+  const confirm = useCallback((newOptions) => {
+    return new Promise((resolve) => {
+      setOptions({ ...newOptions, resolve });
     });
   }, []);
 
   const handleClose = () => {
-    setPromise(null);
+    setOptions(null);
   };
 
-  const handleConfirm = (data) => {
-    promise?.resolve(data);
+  const handleConfirm = () => {
+    options?.resolve(true);
     handleClose();
   };
 
   const handleCancel = () => {
-    promise?.resolve(false);
+    options?.resolve(false);
     handleClose();
   };
 
-  const ConfirmationModal = () => {
-    const [formState, setFormState] = useState({});
-
-    const handleInputChange = (e) => {
-        setFormState(prev => ({...prev, [e.target.name]: e.target.value}));
-    };
-    
-    // Set initial form state when the modal opens
-    useState(() => {
-        if (content?.mode === 'form' && content.inputs) {
-            const initialState = {};
-            content.inputs.forEach(input => {
-                initialState[input.name] = input.defaultValue || '';
-            });
-            setFormState(initialState);
-        }
-    }, [content]);
-
-    if (!promise) return null;
-
-    const isForm = content.mode === 'form';
-
-    return (
-      <Modal
-        isOpen={promise !== null}
-        onClose={handleClose}
-        title={content.title}
-        footer={
-          <>
-            <AdminButton onClick={handleCancel} variant="secondary">
-              Cancel
-            </AdminButton>
-            <AdminButton onClick={() => handleConfirm(isForm ? formState : true)} variant="primary">
-              {content.confirmText || 'Confirm'}
-            </AdminButton>
-          </>
-        }
-      >
-        {isForm ? (
-            <div className="space-y-4">
-                {content.inputs.map(input => (
-                    <AdminInput 
-                        key={input.name}
-                        label={input.label}
-                        id={input.name}
-                        name={input.name}
-                        type={input.type || 'text'}
-                        value={formState[input.name] || ''}
-                        onChange={handleInputChange}
-                    />
-                ))}
-            </div>
-        ) : (
-            <p>{content.message}</p>
-        )}
-      </Modal>
-    );
-  };
+  // This is the key change: The Modal's children are now the `content` property
+  // passed to the confirm function, which can be any valid React node.
+  const ConfirmationModal = () => (
+    <Modal
+      isOpen={options !== null}
+      onClose={handleCancel}
+      title={options?.title || 'Confirmation'}
+      footer={
+        <>
+          <AdminButton onClick={handleCancel} variant="secondary">
+            {options?.cancelText || 'Cancel'}
+          </AdminButton>
+          <AdminButton onClick={handleConfirm} variant="primary">
+            {options?.confirmText || 'Confirm'}
+          </AdminButton>
+        </>
+      }
+    >
+      {/* Render the custom content passed into the hook */}
+      {options?.content}
+    </Modal>
+  );
 
   return { confirm, ConfirmationModal };
 };

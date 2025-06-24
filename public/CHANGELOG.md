@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+### **v2.1.0 - Admin Experience Overhaul** - 2025-06-23
+
+This version focuses on significant improvements to the admin panel, introducing a dynamic team management system and replacing the old alert library with a modern, integrated solution.
+
+#### ✨ New Features
+
+-   **Team & Admin Management**: A new "Teams" panel allows super admins to create, edit, and delete teams and assign admin users to them. This removes the need for hardcoded values in the configuration.
+-   **Flexible Meet Creation**: Creating a meet no longer requires selecting home and away teams, making the system flexible for invitationals and multi-team events.
+-   **Advanced Laning Logic**: The entry management system now uses intelligent laning. If a meet has home/away teams, it prioritizes odd/even lanes accordingly. If not, it fills lanes sequentially.
+-   **Modern Confirmation Modals**: Replaced all `sweetalert2` popups with a custom, non-blocking modal system powered by a `useConfirm` hook and `react-hot-toast` for a cleaner UI.
+
+#### 🛠️ Fixes & Improvements
+
+-   **Code Organization**: The monolithic `AdminView.jsx` has been broken down into separate, dedicated components for each administrative function, significantly improving maintainability.
+-   **Super Admin Role**: Restored and properly integrated the "SUPERADMIN" role, ensuring full access across all team-related panels.
+-   **Date Handling**: Fixed a critical bug where dates could be misinterpreted due to timezone issues.
+-   **Copy Meet Functionality**: Re-implemented the "Copy Meet" feature using the new non-blocking toast system.
+
+<br>
+
+---
+
 ### **v2.0.0 - The Modernization Update** - 2025-06-23
 
 This release marks a complete overhaul of the project's foundation, moving from a static, CDN-based setup to a modern, compiled Vite project. It also introduces major feature enhancements for admins and users.
