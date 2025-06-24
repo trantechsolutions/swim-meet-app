@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { firebaseConfig, ADMIN_TEAMS } from './config.js';
 import { Toaster, toast } from 'react-hot-toast';
+import { useReactToPrint } from 'react-to-print';
 
 // --- Component and View Imports ---
 import Icon from './components/Icon.jsx';
@@ -10,6 +11,7 @@ import ScheduleView from './views/ScheduleView.jsx';
 import { SearchEventView, SearchSwimmerView } from './views/SearchView.jsx';
 import AdminView from './views/AdminView.jsx';
 import SettingsView from './views/SettingsView.jsx';
+import PrintableHeatSheet from './components/PrintableHeatSheet.jsx';
 
 // --- Firebase Imports ---
 import { auth, db } from './firebase.js'; // Use the new central file
@@ -56,12 +58,11 @@ function App() {
     const [selectedMeetId, setSelectedMeetId] = useState(null);
     const [allSwimmers, setAllSwimmers] = useState({});
 
-    const showNotification = (message, type = 'info') => {
-        setNotification({ show: true, message, type });
-        setTimeout(() => {
-            setNotification({ show: false, message: '', type: '' });
-        }, 3000);
-    };
+    const heatSheetRef = useRef();
+    const handlePrint = useReactToPrint({
+        content: () => heatSheetRef.current,
+        documentTitle: `${meetData?.name || 'Swim Meet'} - Heat Sheet`,
+    });
 
     useEffect(() => {
         const applyTheme = (t) => {
@@ -347,12 +348,21 @@ function App() {
                 }}
             />
             <ReloadPrompt />
+            
+            <PrintableHeatSheet ref={heatSheetRef} meetData={meetData} />
+
             <div className="container mx-auto px-4 py-4">
                 <header className="text-center mb-4">
                     {activeTab !== 'admin' && meetData ? (
                          <h1 className="font-bold text-3xl text-primary">{meetData.name}</h1>
                     ): (
                          <h1 className="font-bold text-3xl text-primary">Swim Meet Live</h1>
+                    )}
+                    {/* The new Print button - now only appears if there are events to print */}
+                    {meetData && meetData.events && meetData.events.length > 0 && (
+                        <button onClick={handlePrint} className="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700" title="Print Heat Sheet">
+                            <Icon name="print" />
+                        </button>
                     )}
                     {allMeets.length > 0 && activeTab !== 'admin' && (
                         <div className="mt-2 max-w-md mx-auto">

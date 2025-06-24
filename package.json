@@ -20,6 +20,7 @@
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.5.2",
     "react-markdown": "^10.1.0",
+    "react-to-print": "^3.1.0",
     "remark-gfm": "^4.0.1",
     "sortablejs": "^1.15.2",
     "sweetalert2": "^11.12.1"
